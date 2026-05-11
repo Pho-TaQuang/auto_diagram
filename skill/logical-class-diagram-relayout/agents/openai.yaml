@@ -1,0 +1,4 @@
+interface:
+  display_name: "Logical Class Diagram Relayout"
+  short_description: "Relayout logical class draw.io diagrams."
+  default_prompt: "Use $logical-class-diagram-relayout to relayout a logical code-level draw.io class diagram into controller, interface, manager, adapter, entity, and model bands."

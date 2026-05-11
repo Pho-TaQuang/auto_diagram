@@ -1,0 +1,225 @@
+# AutoDiagram
+
+AutoDiagram is a client-side foundation for generating draw.io / diagrams.net diagrams from structured input.
+
+MVP 0 converts a Mermaid `classDiagram` into raw draw.io `mxGraphModel` XML saved with a `.drawio` extension.
+
+## MVP 0 Pipeline
+
+```text
+docs/demo_mermaid.md -> DiagramDocument -> deterministic layout -> mxGraphModel XML -> .drawio
+```
+
+The output intentionally uses raw `<mxGraphModel>` XML rather than a compressed draw.io file or an `<mxfile>` wrapper.
+Class nodes are exported as draw.io swimlanes with explicit header sizing so stereotypes and class names stay together in the title compartment.
+
+## MVP 1 Hardening Baseline
+
+MVP 1 treats the current openable draw.io output as a structural regression baseline. The baseline fixture is stored at `tests/fixtures/mvp0-baseline.drawio`.
+
+Regression tests intentionally compare structure rather than exact XML text:
+
+- valid `mxGraphModel` XML
+- class, child compartment, and edge counts
+- edge labels
+- edges reference existing class cells
+- class cells use draw.io swimlanes with explicit header `startSize`
+- child compartments begin below the swimlane header
+
+`out/demo.drawio` remains generated output and is not the source of truth for tests.
+
+## MVP 2a Exact Stereotype Group Layout
+
+MVP 2a adds logical stereotype groups to the intermediate model and uses those groups for automatic class placement.
+
+Stereotype grouping uses an exact-input policy:
+
+- Mermaid delimiters `<<` and `>>` are removed.
+- Only outer whitespace is trimmed.
+- Case, punctuation, spelling, internal spaces, and Mermaid `~` markers inside stereotypes are preserved.
+- Stereotypes are not aliased, lowercased, enum-normalized, or inferred from class names.
+
+For example, `<<Service>>`, `<<service>>`, and `<<External Service>>` are three distinct groups. Nodes without a stereotype are placed in a synthetic `Ungrouped` group. Known exact labels such as `Controller`, `ManagerInterface`, `Manager`, `Model`, and `DTO` receive the built-in group order; unknown exact labels remain valid and are placed after the known groups in first-seen order.
+
+## MVP 2b/2c Routing and Group Frames
+
+MVP 2b adds deterministic, group-aware orthogonal routing for inter-group relationships. The layout engine writes simple waypoint arrays into `DiagramEdge.layout.waypoints`; same-group relationships remain direct for now. Routing uses the gap between source and target group bounds and nudges waypoints outside class rectangles.
+
+MVP 2c added stereotype group frames to draw.io. These frames are background visuals only:
+
+- group frames are emitted before class cells so they render behind nodes
+- group labels use the exact `DiagramGroup.label`
+- class swimlanes remain top-level draw.io cells
+- relationships still connect class cells, not group frames
+- frames use a subtle non-connectable, non-collapsible dashed style
+
+## MVP 2d Scored Layout Intent
+
+MVP 2d adds a scored layout pipeline. The layout engine now generates deterministic candidates for group placement, in-group class order, packing, and edge routing, then stores the selected candidate and score metrics in `DiagramDocument.layout`.
+
+The CLI also supports an editable layout intent workflow:
+
+```bash
+npm run layout:init -- docs/demo_mermaid.md -o out/demo.layout.json
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.layout.json
+```
+
+The layout JSON lets users adjust grid size, group row/column placement, packing, and class assignment to groups. These edits affect layout only; they do not change parsed class names, stereotypes, attributes, methods, or relationships.
+
+`layout:init` and `generate` also accept `--suggested-layout` to opt into the built-in architecture-spine placement. This suggested placement is generated from the groups present in the input; it does not create missing groups. Explicit `--layout <layout.json>` remains the source of truth and cannot be combined with `--suggested-layout`.
+
+## MVP 2e Orthogonal Anchored Routing
+
+MVP 2e makes group frames opt-in and switches draw.io edges to `edgeStyle=orthogonalEdgeStyle`. Generated relationships connect class parent cells with explicit source and target anchors rather than connecting to member-row child cells.
+
+Class swimlanes always reserve the standard UML compartments in this order: class name, attributes, then methods. Empty attributes or methods sections still keep their compartment spacing so the separator lines remain consistent.
+
+The router chooses side anchors on class bounds and spaces all endpoints on the same class side evenly. For `n` endpoints on one side, anchor ratios are `(index + 1) / (n + 1)`, so endpoints stay equally distant from each other and from both side corners. Endpoints sharing the same class side are ordered by the opposite class position; on east/west sides this follows target Y position, and on north/south sides this follows target X position. Downward fan-out from a source group to lower-row target groups is row-aware: source anchors use the south side and lower-left or lower-right targets are ordered nearest-to-farthest to avoid weaving. Routing now processes edges whose source and target groups are in the same grid row or same grid column first; remaining diagonal group-to-group edges are routed afterward against the already selected paths. Later edges first choose candidates that do not hit nodes, overlap earlier segments, or cross earlier routes; if no clean candidate exists, scoring falls back to the least costly generated route. Candidate generation includes direct, gutter, local under-row, and exterior-lane orthogonal paths. Candidate scoring vectorizes orthogonal edge segments and strongly penalizes crossings before bends and Manhattan route length, so the router can prefer longer detours when they reduce crossing count.
+
+The scored layout search can also reorder classes inside a stereotype group when the placement is otherwise fixed. It evaluates bounded original, reverse, degree-based, and name-based class-order variants per group and keeps the resulting layout only when its score wins. When callers provide explicit layout intent, group grid positions are locked; the engine only repacks classes inside those groups and reroutes edges.
+
+Programmatic layout callers can optionally pass `anchorOrders`, `anchorOrderMode`, and `anchorOrderVariantLimit` to control endpoint ordering on a specific node side. Auto mode evaluates a bounded set of endpoint-order variants and may choose a different anchor order when the full route score improves.
+
+The web UI summary panel shows the current generated layout score, crossing count, node-hit count, and bend count for Mermaid-generated diagrams.
+
+Draw.io export writes routed control points directly under `<Array as="points">` as plain `<mxPoint x="..." y="..." />` entries. It does not emit `sourcePoint` or `targetPoint`; endpoint selection stays in the edge style through `exitX/exitY` and `entryX/entryY`.
+
+Group frames are hidden by default. To include them as background visuals:
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.layout.json --group-frames
+```
+
+## Web UI MVP
+
+The web UI is a client-side React + Vite app over the same parser, layout, and draw.io exporter used by the CLI. The current UI is an mxGraph-first class diagram layout editor: `mxGraphModel` is the editable source of truth, and the SVG preview is only a view layer.
+
+For fresh Mermaid input, the web UI runs the same scored auto-layout search as the CLI and then exposes the selected candidate as editable layout intent. Placement is locked only after the user edits or imports a layout intent.
+
+The first screen is the tool workflow:
+
+- paste or edit Mermaid `classDiagram` input
+- import raw `<mxGraphModel>` XML or an uncompressed `.drawio` file
+- inspect compact classes, edges, groups, extends/realization relationships, diagnostics, and layout data
+- keep diagnostics readable with a bounded warning log area and clamped message rows
+- open Grid Intent as a popup that derives its initial matrix from the currently displayed layout until the user saves a grid preset, stage logical stereotype group placement on a 10x10 or 15x15 matrix, then reroute and apply the layout only when Save is pressed
+- edit layout-safe fields such as class geometry, edge segment routes, and edge terminals without editing UML semantics
+- adjust stereotype group layout in a large popup 10x10 or 15x15 group-grid matrix, including drag-and-drop group placement with rounded x/y drop preview, compact estimated group footprints, and per-group vertical/horizontal packing rotation recalculated from class sizes
+- preview full class member rows in separate attribute and method compartments without hiding long lists
+- undo/redo layout edits from toolbar buttons or standard Ctrl/Cmd+Z and Ctrl/Cmd+Y shortcuts
+- preview output with the internal SVG renderer
+- keep visible group frames off by default; the `Group frames` toggle controls preview/export frames
+- collapse the left input/data panel and right layout-info panel to small buttons
+- zoom the canvas with Ctrl + mouse wheel or the zoom buttons
+- scroll horizontally and vertically in the canvas
+- pan the canvas by holding Alt and dragging
+- multi-select classes, groups, and edges with Shift/Ctrl/Command clicks or click-drag marquee selection
+- drag selected class boxes to update parent-cell `mxGeometry`
+- select edges through a zoom-aware enlarged hit target
+- select an edge and drag segment midpoint handles perpendicular to that segment to update the edge route
+- keep edited edge routes orthogonal after segment drags and after class moves
+- drag source/target terminal handles onto a class side to reconnect the relationship and redistribute anchors on that side
+- download `.drawio`, layout JSON, SVG preview, or copy raw `mxGraphModel` XML
+
+The web UI does not embed the draw.io editor. Manual draw.io shape editing is intentionally out of scope. SVG export is a preview artifact only; AutoDiagram never converts SVG back to `mxGraphModel`.
+
+Layout JSON export includes the current `mxGraphModel` XML plus extracted layout summaries. In this MVP, importing layout JSON requires an `mxGraphXml` field.
+
+## Supported Mermaid Subset
+
+MVP 0 supports the subset used by `docs/demo_mermaid.md`:
+
+- `classDiagram`
+- `class Name { ... }`
+- stereotype entries such as `<<Controller>>`
+- attributes and methods with visibility prefixes
+- constructors
+- method return types after the method signature
+- relationship operators `..>`, `<|..`, and `<|--`
+- relationship labels after `:`
+
+Relationship endpoints without a matching `class Name` declaration or `class Name { ... }` block are generated as empty class boxes and reported as parser warnings. Add explicit class declarations when those boxes should contain attributes, methods, or stereotypes.
+
+Mermaid generic markers such as `Task~ApiResponse~` are normalized to `Task<ApiResponse>`.
+This generic marker normalization does not apply to stereotype text.
+
+## Commands
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Build:
+
+```bash
+npm run build
+```
+
+Test:
+
+```bash
+npm test
+```
+
+Run the web UI in development:
+
+```bash
+npm run web:dev
+```
+
+Build the web UI:
+
+```bash
+npm run web:build
+```
+
+Generate the sample with the default MVP 2 stereotype group layout:
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio
+```
+
+Create an editable layout intent file:
+
+```bash
+npm run layout:init -- docs/demo_mermaid.md -o out/demo.layout.json
+```
+
+Create an editable layout intent file with the suggested architecture-spine placement:
+
+```bash
+npm run layout:init -- docs/demo_mermaid.md -o out/demo.layout.json --suggested-layout
+```
+
+Generate using an edited layout intent file:
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.layout.json
+```
+
+Generate directly with the suggested architecture-spine placement:
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --suggested-layout
+```
+
+Generate with optional background group frames:
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.layout.json --group-frames
+```
+
+Open `out/demo.drawio` in draw.io / diagrams.net to inspect the result.
+
+## Known Limits
+
+- Drag editing is focused on class positions, edge segment handles, and source/target terminal handles. Full draw.io-style shape editing remains out of scope.
+- Multi-selection supports classes, groups, and edges, but inspector editing still applies to the primary selected item.
+- Undo/redo is model-level for layout edits. Drag gestures are coalesced into one history checkpoint instead of one checkpoint per mousemove.
+- Raw `<mxGraphModel>` XML and uncompressed `.drawio` imports are supported first; compressed draw.io files are deferred.
+- No continuous layout optimizer.
+- No compressed `.drawio` output.
+- No `<mxfile>` wrapper.
+- No free-form diagram editing.

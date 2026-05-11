@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mermaid Class Diagram"
+  short_description: "UML class diagrams with Mermaid"
+  default_prompt: "Use $class-diagram-mermaid to draw a UML class diagram in Mermaid from source docs or code."

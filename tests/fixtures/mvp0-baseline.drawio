@@ -1,0 +1,638 @@
+<mxGraphModel dx="2316" dy="2974" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1169" pageHeight="1654" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+    <mxCell id="node_DmPhuongTienController" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;Controller&gt;&gt;&#xa;DmPhuongTienController" vertex="1">
+      <mxGeometry height="296" width="595" x="40" y="40" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_1" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="-_manager IDmPhuongTienManager" vertex="1">
+      <mxGeometry height="30" width="595" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_2" parent="node_DmPhuongTienController" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="595" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_3" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Paging(DmPhuongTienPageModel pageModel) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="86" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_4" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+InsertOrUpdate(DmPhuongTienModel model) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="116" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_5" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Delete(string id) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="146" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_6" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+UpdateTinhTrang(string id, string tinhtrang) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="176" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_7" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SelectOne(string id) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="206" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_8" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+GetLoaiLucLuongOptions(string strKey) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="236" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienController_child_9" parent="node_DmPhuongTienController" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+UpdateIconByType(string typePhuongTien, string iconId) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="266" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;ManagerInterface&gt;&gt;&#xa;IDmPhuongTienManager" vertex="1">
+      <mxGeometry height="266" width="595" x="755" y="40" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_1" parent="node_IDmPhuongTienManager" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="595" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_2" parent="node_IDmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Paging(DmPhuongTienPageModel model) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="56" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_3" parent="node_IDmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+InsertOrUpdate(DmPhuongTienModel model) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="86" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_4" parent="node_IDmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Delete(string id) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="116" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_5" parent="node_IDmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+UpdateTinhTrang(string id, string tinhtrang) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="146" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_6" parent="node_IDmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SelectOne(string id) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="176" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_7" parent="node_IDmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+GetLoaiLucLuongOptions(string strKey) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="206" as="geometry" />
+    </mxCell>
+    <mxCell id="node_IDmPhuongTienManager_child_8" parent="node_IDmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+UpdateIconByType(string typePhuongTien, string iconId) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="595" y="236" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;Manager&gt;&gt;&#xa;DmPhuongTienManager" vertex="1">
+      <mxGeometry height="386" width="766" x="1470" y="40" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_1" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="-_currentContext ICurrentContext" vertex="1">
+      <mxGeometry height="30" width="766" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_2" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="-_autoMap AutoMap" vertex="1">
+      <mxGeometry height="30" width="766" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_3" parent="node_DmPhuongTienManager" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="766" y="108" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_4" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Paging(DmPhuongTienPageModel model) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="766" y="116" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_5" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+InsertOrUpdate(DmPhuongTienModel model) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="766" y="146" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_6" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Delete(string id) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="766" y="176" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_7" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+UpdateTinhTrang(string id, string tinhtrang) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="766" y="206" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_8" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SelectOne(string id) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="766" y="236" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_9" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+GetLoaiLucLuongOptions(string strKey) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="766" y="266" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_10" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+AddKeywordPredicate(RelationPredicateBucket filter, string keyword, EntityField2[] fields) : void" vertex="1">
+      <mxGeometry height="30" width="766" y="296" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_11" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NormalizeKeyword(string input) : string" vertex="1">
+      <mxGeometry height="30" width="766" y="326" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienManager_child_12" parent="node_DmPhuongTienManager" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+UpdateIconByType(string typePhuongTien, string iconId) : Task&lt;ApiResponse&gt;" vertex="1">
+      <mxGeometry height="30" width="766" y="356" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapterFactory" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;AdapterFactory&gt;&gt;&#xa;DataAccessAdapterFactory" vertex="1">
+      <mxGeometry height="176" width="477" x="40" y="586" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapterFactory_child_1" parent="node_DataAccessAdapterFactory" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="-_configSetting ConfigSetting" vertex="1">
+      <mxGeometry height="30" width="477" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapterFactory_child_2" parent="node_DataAccessAdapterFactory" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="477" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapterFactory_child_3" parent="node_DataAccessAdapterFactory" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DataAccessAdapterFactory()" vertex="1">
+      <mxGeometry height="30" width="477" y="86" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapterFactory_child_4" parent="node_DataAccessAdapterFactory" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="-CreateAdapter(connectionString string) : DataAccessAdapter" vertex="1">
+      <mxGeometry height="30" width="477" y="116" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapterFactory_child_5" parent="node_DataAccessAdapterFactory" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CreateAdapter() : DataAccessAdapter" vertex="1">
+      <mxGeometry height="30" width="477" y="146" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapter" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;DataAccessAdapter&gt;&gt;&#xa;DataAccessAdapter" vertex="1">
+      <mxGeometry height="206" width="544" x="637" y="586" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapter_child_1" parent="node_DataAccessAdapter" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ConnectionStringKeyName string" vertex="1">
+      <mxGeometry height="30" width="544" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapter_child_2" parent="node_DataAccessAdapter" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="544" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapter_child_3" parent="node_DataAccessAdapter" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DataAccessAdapter()" vertex="1">
+      <mxGeometry height="30" width="544" y="86" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapter_child_4" parent="node_DataAccessAdapter" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DataAccessAdapter(keepConnectionOpen bool)" vertex="1">
+      <mxGeometry height="30" width="544" y="116" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapter_child_5" parent="node_DataAccessAdapter" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DataAccessAdapter(connectionString string)" vertex="1">
+      <mxGeometry height="30" width="544" y="146" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DataAccessAdapter_child_6" parent="node_DataAccessAdapter" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DataAccessAdapter(connectionString string, keepConnectionOpen bool)" vertex="1">
+      <mxGeometry height="30" width="544" y="176" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmLoaiLucLuongEntity" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;LLBLGenEntity&gt;&gt;&#xa;SysdmLoaiLucLuongEntity" vertex="1">
+      <mxGeometry height="176" width="220" x="1301" y="586" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmLoaiLucLuongEntity_child_1" parent="node_SysdmLoaiLucLuongEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MaLoai String" vertex="1">
+      <mxGeometry height="30" width="220" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmLoaiLucLuongEntity_child_2" parent="node_SysdmLoaiLucLuongEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MoTa String" vertex="1">
+      <mxGeometry height="30" width="220" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmLoaiLucLuongEntity_child_3" parent="node_SysdmLoaiLucLuongEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TenLoai String" vertex="1">
+      <mxGeometry height="30" width="220" y="108" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmLoaiLucLuongEntity_child_4" parent="node_SysdmLoaiLucLuongEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TrangThai String" vertex="1">
+      <mxGeometry height="30" width="220" y="138" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmLoaiLucLuongEntity_child_5" parent="node_SysdmLoaiLucLuongEntity" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="220" y="168" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;LLBLGenEntity&gt;&gt;&#xa;SysdmPhuongTienEntity" vertex="1">
+      <mxGeometry height="1306" width="240" x="40" y="952" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_1" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+BienSo String" vertex="1">
+      <mxGeometry height="25" width="240" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_2" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CameraAccount String" vertex="1">
+      <mxGeometry height="25" width="240" y="73" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_3" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CameraIp String" vertex="1">
+      <mxGeometry height="25" width="240" y="98" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_4" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChieuCao Double" vertex="1">
+      <mxGeometry height="25" width="240" y="123" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_5" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChieuDai Double" vertex="1">
+      <mxGeometry height="25" width="240" y="148" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_6" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChieuRong Double" vertex="1">
+      <mxGeometry height="25" width="240" y="173" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_7" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChungLoai String" vertex="1">
+      <mxGeometry height="25" width="240" y="198" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_8" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoCameraHanhTrinh String" vertex="1">
+      <mxGeometry height="25" width="240" y="223" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_9" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoCoiUuTien String" vertex="1">
+      <mxGeometry height="25" width="240" y="248" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_10" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoDenUuTien String" vertex="1">
+      <mxGeometry height="25" width="240" y="273" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_11" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoGps String" vertex="1">
+      <mxGeometry height="25" width="240" y="298" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_12" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CongNang String" vertex="1">
+      <mxGeometry height="25" width="240" y="323" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_13" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CongSuatBom Double" vertex="1">
+      <mxGeometry height="25" width="240" y="348" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_14" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DiaChi String" vertex="1">
+      <mxGeometry height="25" width="240" y="373" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_15" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DinhMucNhienLieu String" vertex="1">
+      <mxGeometry height="25" width="240" y="398" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_16" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DonViQuanLy String" vertex="1">
+      <mxGeometry height="25" width="240" y="423" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_17" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DungTichBonNuoc Double" vertex="1">
+      <mxGeometry height="25" width="240" y="448" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_18" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DungTichNhienLieu Double" vertex="1">
+      <mxGeometry height="25" width="240" y="473" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_19" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+GhiChuNhanSuDiKem String" vertex="1">
+      <mxGeometry height="25" width="240" y="498" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_20" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+GpsDeviceId String" vertex="1">
+      <mxGeometry height="25" width="240" y="523" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_21" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+HanBaoTriTiepTheo DateTime" vertex="1">
+      <mxGeometry height="25" width="240" y="548" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_22" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+HangXe String" vertex="1">
+      <mxGeometry height="25" width="240" y="573" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_23" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+IconId String" vertex="1">
+      <mxGeometry height="25" width="240" y="598" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_24" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Id String" vertex="1">
+      <mxGeometry height="25" width="240" y="623" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_25" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+LaiXeMacDinhId String" vertex="1">
+      <mxGeometry height="25" width="240" y="648" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_26" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+LoaiNhienLieu String" vertex="1">
+      <mxGeometry height="25" width="240" y="673" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_27" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MaDinhDanhGps String" vertex="1">
+      <mxGeometry height="25" width="240" y="698" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_28" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MaPhuongTien String" vertex="1">
+      <mxGeometry height="25" width="240" y="723" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_29" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Matinh String" vertex="1">
+      <mxGeometry height="25" width="240" y="748" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_30" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Maxa String" vertex="1">
+      <mxGeometry height="25" width="240" y="773" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_31" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Model String" vertex="1">
+      <mxGeometry height="25" width="240" y="798" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_32" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MoTa String" vertex="1">
+      <mxGeometry height="25" width="240" y="823" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_33" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NamSanXuat Int16" vertex="1">
+      <mxGeometry height="25" width="240" y="848" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_34" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NgayBaoTriGanNhat DateTime" vertex="1">
+      <mxGeometry height="25" width="240" y="873" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_35" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NgaySua DateTime" vertex="1">
+      <mxGeometry height="25" width="240" y="898" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_36" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NgayTao DateTime" vertex="1">
+      <mxGeometry height="25" width="240" y="923" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_37" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NguoiSua String" vertex="1">
+      <mxGeometry height="25" width="240" y="948" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_38" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Shape String" vertex="1">
+      <mxGeometry height="25" width="240" y="973" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_39" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SoCho Int32" vertex="1">
+      <mxGeometry height="25" width="240" y="998" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_40" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SoSeri String" vertex="1">
+      <mxGeometry height="25" width="240" y="1023" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_41" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TenPhuongTien String" vertex="1">
+      <mxGeometry height="25" width="240" y="1048" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_42" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ThongSoKyThuat String" vertex="1">
+      <mxGeometry height="25" width="240" y="1073" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_43" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TinhTrangSanSang String" vertex="1">
+      <mxGeometry height="25" width="240" y="1098" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_44" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ToaDoX Double" vertex="1">
+      <mxGeometry height="25" width="240" y="1123" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_45" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ToaDoY Double" vertex="1">
+      <mxGeometry height="25" width="240" y="1148" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_46" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ToLaiXeMacDinh String" vertex="1">
+      <mxGeometry height="25" width="240" y="1173" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_47" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TrangThai String" vertex="1">
+      <mxGeometry height="25" width="240" y="1198" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_48" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TrongTai Double" vertex="1">
+      <mxGeometry height="25" width="240" y="1223" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_49" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TypePhuongTien String" vertex="1">
+      <mxGeometry height="25" width="240" y="1248" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_50" parent="node_SysdmPhuongTienEntity" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Unitcode String" vertex="1">
+      <mxGeometry height="25" width="240" y="1273" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysdmPhuongTienEntity_child_51" parent="node_SysdmPhuongTienEntity" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="240" y="1298" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;Model&gt;&gt;&#xa;DmPhuongTienModel" vertex="1">
+      <mxGeometry height="1456" width="248" x="400" y="952" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_1" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Id string" vertex="1">
+      <mxGeometry height="25" width="248" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_2" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MaPhuongTien string" vertex="1">
+      <mxGeometry height="25" width="248" y="73" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_3" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TenPhuongTien string" vertex="1">
+      <mxGeometry height="25" width="248" y="98" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_4" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TypePhuongTien string" vertex="1">
+      <mxGeometry height="25" width="248" y="123" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_5" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TrangThai string" vertex="1">
+      <mxGeometry height="25" width="248" y="148" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_6" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Unitcode string" vertex="1">
+      <mxGeometry height="25" width="248" y="173" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_7" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NgayTao DateTime" vertex="1">
+      <mxGeometry height="25" width="248" y="198" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_8" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NguoiTao string" vertex="1">
+      <mxGeometry height="25" width="248" y="223" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_9" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NgaySua DateTime" vertex="1">
+      <mxGeometry height="25" width="248" y="248" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_10" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NguoiSua string" vertex="1">
+      <mxGeometry height="25" width="248" y="273" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_11" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+BienSo string" vertex="1">
+      <mxGeometry height="25" width="248" y="298" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_12" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChungLoai string" vertex="1">
+      <mxGeometry height="25" width="248" y="323" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_13" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+HangXe string" vertex="1">
+      <mxGeometry height="25" width="248" y="348" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_14" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Model string" vertex="1">
+      <mxGeometry height="25" width="248" y="373" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_15" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NamSanXuat int?" vertex="1">
+      <mxGeometry height="25" width="248" y="398" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_16" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SoSeri string" vertex="1">
+      <mxGeometry height="25" width="248" y="423" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_17" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SoCho string" vertex="1">
+      <mxGeometry height="25" width="248" y="448" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_18" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SoLuong int" vertex="1">
+      <mxGeometry height="25" width="248" y="473" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_19" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ThongSoKyThuat string" vertex="1">
+      <mxGeometry height="25" width="248" y="498" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_20" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CongNang string" vertex="1">
+      <mxGeometry height="25" width="248" y="523" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_21" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CongSuatBom double?" vertex="1">
+      <mxGeometry height="25" width="248" y="548" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_22" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DungTichBonNuoc double?" vertex="1">
+      <mxGeometry height="25" width="248" y="573" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_23" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DonViTinh string" vertex="1">
+      <mxGeometry height="25" width="248" y="598" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_24" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DiaBan string" vertex="1">
+      <mxGeometry height="25" width="248" y="623" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_25" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DiaChi string" vertex="1">
+      <mxGeometry height="25" width="248" y="648" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_26" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DonViQuanLy string" vertex="1">
+      <mxGeometry height="25" width="248" y="673" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_27" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MoTa string" vertex="1">
+      <mxGeometry height="25" width="248" y="698" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_28" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TinhTrangSanSang string" vertex="1">
+      <mxGeometry height="25" width="248" y="723" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_29" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+IconId string" vertex="1">
+      <mxGeometry height="25" width="248" y="748" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_30" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Shape string" vertex="1">
+      <mxGeometry height="25" width="248" y="773" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_31" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CameraAccount string" vertex="1">
+      <mxGeometry height="25" width="248" y="798" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_32" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CameraIp string" vertex="1">
+      <mxGeometry height="25" width="248" y="823" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_33" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChieuCao double?" vertex="1">
+      <mxGeometry height="25" width="248" y="848" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_34" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChieuDai double?" vertex="1">
+      <mxGeometry height="25" width="248" y="873" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_35" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ChieuRong double?" vertex="1">
+      <mxGeometry height="25" width="248" y="898" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_36" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoCameraHanhTrinh string" vertex="1">
+      <mxGeometry height="25" width="248" y="923" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_37" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoCoiUuTien string" vertex="1">
+      <mxGeometry height="25" width="248" y="948" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_38" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoDenUuTien string" vertex="1">
+      <mxGeometry height="25" width="248" y="973" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_39" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CoGps string" vertex="1">
+      <mxGeometry height="25" width="248" y="998" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_40" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DinhMucNhienLieu string" vertex="1">
+      <mxGeometry height="25" width="248" y="1023" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_41" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DungTichNhienLieu double?" vertex="1">
+      <mxGeometry height="25" width="248" y="1048" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_42" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+GhiChuNhanSuDiKem string" vertex="1">
+      <mxGeometry height="25" width="248" y="1073" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_43" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+GpsDeviceId string" vertex="1">
+      <mxGeometry height="25" width="248" y="1098" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_44" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+HanBaoTriTiepTheo DateTime?" vertex="1">
+      <mxGeometry height="25" width="248" y="1123" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_45" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+LaiXeMacDinhId string" vertex="1">
+      <mxGeometry height="25" width="248" y="1148" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_46" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+LoaiNhienLieu string" vertex="1">
+      <mxGeometry height="25" width="248" y="1173" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_47" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MaDinhDanhGps string" vertex="1">
+      <mxGeometry height="25" width="248" y="1198" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_48" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Matinh string" vertex="1">
+      <mxGeometry height="25" width="248" y="1223" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_49" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Maxa string" vertex="1">
+      <mxGeometry height="25" width="248" y="1248" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_50" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+NgayBaoTriGanNhat DateTime?" vertex="1">
+      <mxGeometry height="25" width="248" y="1273" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_51" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ToLaiXeMacDinh string" vertex="1">
+      <mxGeometry height="25" width="248" y="1298" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_52" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TrongTai double?" vertex="1">
+      <mxGeometry height="25" width="248" y="1323" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_53" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ToaDoX double?" vertex="1">
+      <mxGeometry height="25" width="248" y="1348" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_54" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ToaDoY double?" vertex="1">
+      <mxGeometry height="25" width="248" y="1373" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_55" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+LoaiLucLuongTen string" vertex="1">
+      <mxGeometry height="25" width="248" y="1398" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_56" parent="node_DmPhuongTienModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DonViQuanLyTen string" vertex="1">
+      <mxGeometry height="25" width="248" y="1423" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienModel_child_57" parent="node_DmPhuongTienModel" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="248" y="1448" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysQlpaModel_LoaiLucLuongOptionModel" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;Model&gt;&gt;&#xa;SysQlpaModel_LoaiLucLuongOptionModel" vertex="1">
+      <mxGeometry height="206" width="307" x="768" y="952" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysQlpaModel_LoaiLucLuongOptionModel_child_1" parent="node_SysQlpaModel_LoaiLucLuongOptionModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Id string" vertex="1">
+      <mxGeometry height="30" width="307" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysQlpaModel_LoaiLucLuongOptionModel_child_2" parent="node_SysQlpaModel_LoaiLucLuongOptionModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MaLoai string" vertex="1">
+      <mxGeometry height="30" width="307" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysQlpaModel_LoaiLucLuongOptionModel_child_3" parent="node_SysQlpaModel_LoaiLucLuongOptionModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TenLoai string" vertex="1">
+      <mxGeometry height="30" width="307" y="108" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysQlpaModel_LoaiLucLuongOptionModel_child_4" parent="node_SysQlpaModel_LoaiLucLuongOptionModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MoTa string" vertex="1">
+      <mxGeometry height="30" width="307" y="138" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysQlpaModel_LoaiLucLuongOptionModel_child_5" parent="node_SysQlpaModel_LoaiLucLuongOptionModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+UnitCode string" vertex="1">
+      <mxGeometry height="30" width="307" y="168" as="geometry" />
+    </mxCell>
+    <mxCell id="node_SysQlpaModel_LoaiLucLuongOptionModel_child_6" parent="node_SysQlpaModel_LoaiLucLuongOptionModel" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="307" y="198" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;DTO&gt;&gt;&#xa;DmPhuongTienPageModel" vertex="1">
+      <mxGeometry height="326" width="220" x="40" y="2568" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_1" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Search string" vertex="1">
+      <mxGeometry height="30" width="220" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_2" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TypePhuongTien string" vertex="1">
+      <mxGeometry height="30" width="220" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_3" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+MaPhuongTien string" vertex="1">
+      <mxGeometry height="30" width="220" y="108" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_4" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TenPhuongTien string" vertex="1">
+      <mxGeometry height="30" width="220" y="138" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_5" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+BienSo string" vertex="1">
+      <mxGeometry height="30" width="220" y="168" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_6" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DonViQuanLy string" vertex="1">
+      <mxGeometry height="30" width="220" y="198" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_7" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+DiaBan string" vertex="1">
+      <mxGeometry height="30" width="220" y="228" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_8" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TinhTrangSuDung string" vertex="1">
+      <mxGeometry height="30" width="220" y="258" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_9" parent="node_DmPhuongTienPageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+TrangThai string" vertex="1">
+      <mxGeometry height="30" width="220" y="288" as="geometry" />
+    </mxCell>
+    <mxCell id="node_DmPhuongTienPageModel_child_10" parent="node_DmPhuongTienPageModel" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="220" y="318" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel" parent="1" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=48;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=0;marginBottom=0;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc)" value="&lt;&lt;DTO&gt;&gt;&#xa;PageModel" vertex="1">
+      <mxGeometry height="296" width="220" x="380" y="2568" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_1" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Search string" vertex="1">
+      <mxGeometry height="30" width="220" y="48" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_2" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+CurrentPage int" vertex="1">
+      <mxGeometry height="30" width="220" y="78" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_3" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+PageSize int" vertex="1">
+      <mxGeometry height="30" width="220" y="108" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_4" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Condition string" vertex="1">
+      <mxGeometry height="30" width="220" y="138" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_5" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SortColumn string" vertex="1">
+      <mxGeometry height="30" width="220" y="168" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_6" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+SortExpression string" vertex="1">
+      <mxGeometry height="30" width="220" y="198" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_7" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+Status string" vertex="1">
+      <mxGeometry height="30" width="220" y="228" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_8" parent="node_PageModel" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest" value="+ColumnName string" vertex="1">
+      <mxGeometry height="30" width="220" y="258" as="geometry" />
+    </mxCell>
+    <mxCell id="node_PageModel_child_9" parent="node_PageModel" style="line;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;strokeColor=inherit" vertex="1">
+      <mxGeometry height="8" width="220" y="288" as="geometry" />
+    </mxCell>
+    <mxCell id="edge_1" edge="1" parent="1" source="node_DmPhuongTienController" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_IDmPhuongTienManager" value="inject/call">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_2" edge="1" parent="1" source="node_IDmPhuongTienManager" style="curved=1;dashed=1;startArrow=block;startSize=16;startFill=0;endArrow=none;rounded=0;" target="node_DmPhuongTienManager" value="implements">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_3" edge="1" parent="1" source="node_PageModel" style="curved=1;startArrow=block;startSize=16;startFill=0;endArrow=none;rounded=0;" target="node_DmPhuongTienPageModel" value="extends">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_4" edge="1" parent="1" source="node_DmPhuongTienManager" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_DataAccessAdapterFactory" value="creates adapter">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_5" edge="1" parent="1" source="node_DmPhuongTienManager" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_SysdmLoaiLucLuongEntity" value="query/map options">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_6" edge="1" parent="1" source="node_DmPhuongTienManager" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_SysdmPhuongTienEntity" value="CRUD/status/map">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_7" edge="1" parent="1" source="node_DmPhuongTienManager" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_DmPhuongTienModel" value="use">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_8" edge="1" parent="1" source="node_DmPhuongTienManager" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_DmPhuongTienPageModel" value="use">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_9" edge="1" parent="1" source="node_DmPhuongTienManager" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_SysQlpaModel_LoaiLucLuongOptionModel" value="use">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_10" edge="1" parent="1" source="node_DataAccessAdapterFactory" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_DataAccessAdapter" value="creates">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_11" edge="1" parent="1" source="node_DmPhuongTienController" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_DmPhuongTienModel" value="input/output">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_12" edge="1" parent="1" source="node_DmPhuongTienController" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_DmPhuongTienPageModel" value="input/output">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="edge_13" edge="1" parent="1" source="node_DmPhuongTienController" style="curved=1;dashed=1;startArrow=none;endArrow=open;endSize=12;rounded=0;" target="node_SysQlpaModel_LoaiLucLuongOptionModel" value="input/output">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+  </root>
+</mxGraphModel>

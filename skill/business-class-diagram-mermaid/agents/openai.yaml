@@ -1,0 +1,4 @@
+interface:
+  display_name: "Business Class Diagram Mermaid"
+  short_description: "Business-level Mermaid class diagrams"
+  default_prompt: "Use $business-class-diagram-mermaid to draw a business-level Mermaid class diagram from the provided requirements or Mau 08 tables."

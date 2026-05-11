@@ -1,0 +1,4 @@
+interface:
+  display_name: "Draw.io Diagram Relayout"
+  short_description: "Relayout draw.io XML diagrams while preserving content."
+  default_prompt: "Use $drawio-diagram-relayout to relayout this draw.io mxGraphModel XML and reduce edge crossings without changing class, enum, or edge label content."
