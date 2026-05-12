@@ -48,6 +48,9 @@ const nodeGapY = 80;
 const waypointMargin = 16;
 const anchorStubDistance = 24;
 const defaultCandidateLimit = 100;
+const lockedGroupCandidateLimit = 220;
+const lockedGroupAnchorOrderVariantLimit = 32;
+const exactEndpointBucketPermutationLimit = 5;
 const epsilon = 0.001;
 const scoreWeights = {
   edgeNodeHits: 1000000000,
@@ -210,6 +213,16 @@ type AnchorAssignmentVariant = {
   assignments: Map<string, EdgeRoutingAssignment>;
 };
 
+type AnchorOrderPlan = {
+  id: string;
+  ordersByBucket: Map<string, EdgeEndpointReference[]>;
+};
+
+type EndpointBucketOrderVariant = {
+  id: string;
+  endpoints: EdgeEndpointReference[];
+};
+
 type ResolvedRoutingOptions = {
   anchorOrders: AnchorOrderIntent[];
   anchorOrderMode: AnchorOrderMode;
@@ -292,6 +305,7 @@ export function applyStereotypeGridLayout(
   options: ApplyStereotypeGridLayoutOptions = {}
 ): DiagramDocument {
   const nodes = cloneMeasuredNodes(document.nodes);
+  const hasExplicitIntent = Boolean(options.intent);
   const prepared = options.intent
     ? applyLayoutIntent(nodes, normalizeStereotypeLayoutIntent(options.intent))
     : createDefaultLayoutInput(nodes);
@@ -300,27 +314,32 @@ export function applyStereotypeGridLayout(
     nodes,
     document.edges,
     prepared.grid,
-    Boolean(options.intent),
-    options.candidateLimit ?? defaultCandidateLimit
+    hasExplicitIntent,
+    options.candidateLimit ?? (hasExplicitIntent ? lockedGroupCandidateLimit : defaultCandidateLimit)
   );
-  const attempts = candidatePlans.map((candidate) => materializeCandidate(candidate, nodes, document.edges, resolveRoutingOptions(options)));
+  const routingOptions = resolveRoutingOptions(options, hasExplicitIntent);
+  const attempts = candidatePlans.map((candidate) => materializeCandidate(candidate, nodes, document.edges, routingOptions));
 
   if (attempts.length === 0) {
     throw new Error("No layout candidates were generated.");
   }
 
   const best = attempts.reduce((currentBest, attempt) => compareAttempts(attempt, currentBest) < 0 ? attempt : currentBest);
+  const refinedEdges = routingOptions.anchorOrderMode === "manual"
+    ? best.edges
+    : refineRoutedEdgeAnchors(best.edges, best.nodes, best.groups);
+  const refinedScore = scoreLayout(refinedEdges, best.nodes, best.groups);
 
   return {
     ...document,
     nodes: best.nodes,
-    edges: best.edges,
+    edges: refinedEdges,
     groups: best.groups,
     layout: {
       engine: "stereotype-scored",
       selectedCandidateId: best.id,
       candidatesEvaluated: attempts.length,
-      score: best.score,
+      score: refinedScore,
       grid: best.grid
     }
   };
@@ -742,6 +761,7 @@ function groupNodeOrderVariants(
       nodeIds: orderNodeIds(group.nodeIds, variantId, nodeById, degreeByNodeId)
     }))
     .filter((variant) => !sameStringList(variant.nodeIds, group.nodeIds));
+  variants.push(...permutationNodeOrderVariants(group.nodeIds));
   const unique = new Map<string, GroupNodeOrderVariant>();
 
   for (const variant of variants) {
@@ -749,6 +769,36 @@ function groupNodeOrderVariants(
   }
 
   return [...unique.values()];
+}
+
+function permutationNodeOrderVariants(nodeIds: string[]): GroupNodeOrderVariant[] {
+  if (nodeIds.length < 2 || nodeIds.length > 4) {
+    return [];
+  }
+
+  return permutations(nodeIds)
+    .filter((candidate) => !sameStringList(candidate, nodeIds))
+    .map((candidate, index) => ({
+      id: `perm-${index + 1}`,
+      nodeIds: candidate
+    }));
+}
+
+function permutations<T>(values: T[]): T[][] {
+  if (values.length <= 1) {
+    return [values];
+  }
+
+  const results: T[][] = [];
+
+  values.forEach((value, index) => {
+    const remaining = [...values.slice(0, index), ...values.slice(index + 1)];
+    for (const suffix of permutations(remaining)) {
+      results.push([value, ...suffix]);
+    }
+  });
+
+  return results;
 }
 
 function replaceGroupNodeOrder(
@@ -1154,6 +1204,212 @@ function routedCandidateFromEdge(edge: DiagramEdge, nodes: DiagramNode[]): Route
   };
 }
 
+function refineRoutedEdgeAnchors(
+  routedEdges: DiagramEdge[],
+  nodes: DiagramNode[],
+  groups: DiagramGroup[]
+): DiagramEdge[] {
+  let currentEdges = routedEdges.map((edge) => cloneEdge(edge));
+  let currentScore = scoreLayout(currentEdges, nodes, groups);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const nodeBounds = nodes.map((node) => requireLayout(node));
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    let changed = false;
+    const currentEdgeById = new Map(currentEdges.map((edge) => [edge.id, edge]));
+    const routingOrder = orderEdgesForRouting(currentEdges, nodeById, groupById);
+
+    for (const orderedEdge of routingOrder) {
+      const currentEdge = currentEdgeById.get(orderedEdge.id);
+      const sourceNode = currentEdge ? nodeById.get(currentEdge.sourceId) : undefined;
+      const targetNode = currentEdge ? nodeById.get(currentEdge.targetId) : undefined;
+
+      if (!currentEdge || !sourceNode || !targetNode || !currentEdge.layout?.sourceAnchor || !currentEdge.layout.targetAnchor) {
+        continue;
+      }
+
+      const sourceGroup = sourceNode.groupId ? groupById.get(sourceNode.groupId) : undefined;
+      const targetGroup = targetNode.groupId ? groupById.get(targetNode.groupId) : undefined;
+      const candidates = refinedRouteCandidatesForEdge(currentEdge, sourceNode, targetNode, sourceGroup, targetGroup, nodeBounds);
+
+      let bestEdge = currentEdge;
+      let bestScore = currentScore;
+
+      for (const candidate of candidates) {
+        const candidateEdge: DiagramEdge = {
+          ...currentEdge,
+          layout: {
+            ...currentEdge.layout,
+            sourceAnchor: candidate.sourceAnchor,
+            targetAnchor: candidate.targetAnchor,
+            waypoints: candidate.waypoints
+          }
+        };
+        const nextEdges = currentEdges.map((edge) => edge.id === candidateEdge.id ? candidateEdge : edge);
+        const nextScore = scoreLayout(nextEdges, nodes, groups);
+
+        if (compareScoresWithoutEdgeLength(nextScore, bestScore) < 0) {
+          bestEdge = candidateEdge;
+          bestScore = nextScore;
+        }
+      }
+
+      if (bestEdge !== currentEdge) {
+        currentEdges = currentEdges.map((edge) => edge.id === bestEdge.id ? bestEdge : edge);
+        currentScore = bestScore;
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      break;
+    }
+  }
+
+  return currentEdges;
+}
+
+function refinedRouteCandidatesForEdge(
+  edge: DiagramEdge,
+  sourceNode: DiagramNode,
+  targetNode: DiagramNode,
+  sourceGroup: DiagramGroup | undefined,
+  targetGroup: DiagramGroup | undefined,
+  nodeBounds: DiagramNodeLayout[]
+): RoutedEdgeCandidate[] {
+  const sourceLayout = requireLayout(sourceNode);
+  const targetLayout = requireLayout(targetNode);
+  const currentSourceAnchor = edge.layout?.sourceAnchor;
+  const currentTargetAnchor = edge.layout?.targetAnchor;
+
+  if (!currentSourceAnchor || !currentTargetAnchor) {
+    return [];
+  }
+
+  const currentSourcePoint = anchorPoint(sourceLayout, currentSourceAnchor);
+  const currentTargetPoint = anchorPoint(targetLayout, currentTargetAnchor);
+  const sourceNeighbor = edge.layout?.waypoints?.[0] ?? currentTargetPoint;
+  const targetNeighbor = edge.layout?.waypoints?.[edge.layout.waypoints.length - 1] ?? currentSourcePoint;
+  const sourceAnchors = endpointRefinementAnchors(sourceLayout, targetLayout, currentSourceAnchor, sourceNeighbor);
+  const targetAnchors = endpointRefinementAnchors(targetLayout, sourceLayout, currentTargetAnchor, targetNeighbor);
+
+  return uniqueRoutes(sourceAnchors.flatMap((sourceAnchor) =>
+    targetAnchors.flatMap((targetAnchor) =>
+      routeCandidatesForAnchors(
+        sourceLayout,
+        targetLayout,
+        sourceAnchor,
+        targetAnchor,
+        0,
+        0,
+        sourceGroup,
+        targetGroup,
+        nodeBounds
+      )
+    )
+  ));
+}
+
+function endpointRefinementAnchors(
+  layout: DiagramNodeLayout,
+  otherLayout: DiagramNodeLayout,
+  currentAnchor: DiagramEdgeAnchor,
+  routeNeighbor: DiagramPoint
+): DiagramEdgeAnchor[] {
+  const center = centerOf(layout);
+  const otherCenter = centerOf(otherLayout);
+  const dx = otherCenter.x - center.x;
+  const dy = otherCenter.y - center.y;
+  const sides = uniqueAnchorSides([
+    currentAnchor.side,
+    Math.abs(dx) > epsilon ? (dx >= 0 ? "east" : "west") : undefined,
+    Math.abs(dy) > epsilon ? (dy >= 0 ? "south" : "north") : undefined
+  ]);
+  const anchors: DiagramEdgeAnchor[] = [];
+
+  for (const side of sides) {
+    const ratios = uniqueRatios([
+      side === currentAnchor.side ? currentAnchor.ratio : undefined,
+      ratioForPointOnSide(layout, side, otherCenter),
+      ratioForPointOnSide(layout, side, routeNeighbor)
+    ]);
+
+    for (const ratio of ratios) {
+      anchors.push({ side, ratio });
+    }
+  }
+
+  return uniqueAnchors(anchors);
+}
+
+function uniqueAnchorSides(sides: Array<DiagramEdgeAnchorSide | undefined>): DiagramEdgeAnchorSide[] {
+  const unique: DiagramEdgeAnchorSide[] = [];
+  const seen = new Set<DiagramEdgeAnchorSide>();
+
+  for (const side of sides) {
+    if (!side || seen.has(side)) {
+      continue;
+    }
+
+    seen.add(side);
+    unique.push(side);
+  }
+
+  return unique;
+}
+
+function uniqueRatios(ratios: Array<number | undefined>): number[] {
+  const unique: number[] = [];
+  const seen = new Set<string>();
+
+  for (const ratio of ratios) {
+    if (ratio === undefined || !Number.isFinite(ratio)) {
+      continue;
+    }
+
+    const normalized = roundRatio(clamp(ratio, 0.05, 0.95));
+    const key = formatScoreNumber(normalized);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(normalized);
+  }
+
+  return unique;
+}
+
+function uniqueAnchors(anchors: DiagramEdgeAnchor[]): DiagramEdgeAnchor[] {
+  const unique: DiagramEdgeAnchor[] = [];
+  const seen = new Set<string>();
+
+  for (const anchor of anchors) {
+    const key = `${anchor.side}:${formatScoreNumber(anchor.ratio)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(anchor);
+  }
+
+  return unique;
+}
+
+function ratioForPointOnSide(
+  layout: DiagramNodeLayout,
+  side: DiagramEdgeAnchorSide,
+  point: DiagramPoint
+): number {
+  if (side === "north" || side === "south") {
+    return (point.x - layout.x) / layout.width;
+  }
+
+  return (point.y - layout.y) / layout.height;
+}
+
 function orderEdgesForRouting(
   edges: DiagramEdge[],
   nodeById: Map<string, DiagramNode>,
@@ -1282,50 +1538,298 @@ function allocateEdgeRoutingAssignmentVariants(
   const manualOrderByBucket = new Map(
     routingOptions.anchorOrders.map((order) => [anchorOrderIntentKey(order.nodeId, order.side), order.edgeOrder])
   );
-  // AUTODIAGRAM CHANGE: tạo nhiều chiến lược sắp thứ tự anchor để router chọn variant ít cross nhất.
-  const variantIds = anchorOrderVariantIds(routingOptions);
-  const variants = variantIds.map((variantId) => ({
+  const orderPlans = createAnchorOrderPlans(endpointBuckets, manualOrderByBucket, routingOptions);
+
+  return orderPlans.map((plan) => materializeAnchorAssignmentVariant(plan, edges));
+}
+
+function createAnchorOrderPlans(
+  endpointBuckets: Map<string, EdgeEndpointReference[]>,
+  manualOrderByBucket: Map<string, string[]>,
+  routingOptions: ResolvedRoutingOptions
+): AnchorOrderPlan[] {
+  const globalPlans = anchorOrderVariantIds(routingOptions).map((variantId): AnchorOrderPlan => ({
     id: `anchor-${variantId}`,
-    endpointAssignments: new Map<string, EdgeEndpointAssignment>()
+    ordersByBucket: new Map([...endpointBuckets].map(([bucketKey, endpoints]) => [
+      bucketKey,
+      orderEndpointBucketVariant(endpoints, variantId, manualOrderByBucket.get(bucketKey))
+    ]))
   }));
 
-  for (const [bucketKey, endpoints] of endpointBuckets) {
-    const manualEdgeOrder = manualOrderByBucket.get(bucketKey);
+  if (routingOptions.anchorOrderMode === "manual") {
+    return uniqueAnchorOrderPlans(globalPlans).slice(0, routingOptions.anchorOrderVariantLimit);
+  }
 
-    for (const variant of variants) {
-      // AUTODIAGRAM CHANGE: chỉ đổi thứ tự endpoint; ratio vẫn chia đều trên cạnh node.
-      const orderedEndpoints = orderEndpointBucketVariant(endpoints, variant.id.replace(/^anchor-/, ""), manualEdgeOrder);
-      const ratios = anchorRatiosForCount(orderedEndpoints.length);
+  const localPlans = createLocalAnchorOrderPlans(endpointBuckets, manualOrderByBucket, routingOptions);
+  const baselinePlan = globalPlans[0];
+  const remainingGlobalPlans = globalPlans.slice(1);
+  return uniqueAnchorOrderPlans([
+    ...(baselinePlan ? [baselinePlan] : []),
+    ...localPlans,
+    ...remainingGlobalPlans
+  ]).slice(0, routingOptions.anchorOrderVariantLimit);
+}
 
-      orderedEndpoints.forEach((endpoint, index) => {
-        variant.endpointAssignments.set(endpointAssignmentKey(endpoint.edge.id, endpoint.role), {
-          anchor: {
-            side: endpoint.side,
-            ratio: ratios[index]
-          },
-          laneIndex: index
+function createLocalAnchorOrderPlans(
+  endpointBuckets: Map<string, EdgeEndpointReference[]>,
+  manualOrderByBucket: Map<string, string[]>,
+  routingOptions: ResolvedRoutingOptions
+): AnchorOrderPlan[] {
+  const baselineOrders = new Map([...endpointBuckets].map(([bucketKey, endpoints]) => [
+    bucketKey,
+    orderEndpointBucketVariant(endpoints, "geometric", manualOrderByBucket.get(bucketKey))
+  ]));
+  const bucketOptions = [...endpointBuckets]
+    .map(([bucketKey, endpoints]) => ({
+      bucketKey,
+      options: endpointBucketOrderVariants(endpoints, manualOrderByBucket.get(bucketKey), routingOptions)
+    }))
+    .filter(({ options }) => options.length > 1)
+    .sort((left, right) =>
+      right.options[0].endpoints.length - left.options[0].endpoints.length ||
+      left.bucketKey.localeCompare(right.bucketKey)
+    );
+  const plans: AnchorOrderPlan[] = [];
+  const maxPlans = Math.max(1, routingOptions.anchorOrderVariantLimit);
+  let frontier: AnchorOrderPlan[] = [{
+    id: "anchor-local-geometric",
+    ordersByBucket: baselineOrders
+  }];
+
+  for (const { bucketKey, options } of bucketOptions) {
+    const nextPlans: AnchorOrderPlan[] = [];
+
+    for (const plan of frontier) {
+      const currentOrder = plan.ordersByBucket.get(bucketKey);
+
+      for (const option of options) {
+        if (currentOrder && sameEndpointOrder(currentOrder, option.endpoints)) {
+          continue;
+        }
+
+        const ordersByBucket = cloneBucketOrders(plan.ordersByBucket);
+        ordersByBucket.set(bucketKey, option.endpoints);
+        nextPlans.push({
+          id: `${plan.id}-${safePlanId(bucketKey)}-${option.id}`,
+          ordersByBucket
         });
+      }
+    }
+
+    plans.push(...nextPlans);
+    frontier = uniqueAnchorOrderPlans([...frontier, ...nextPlans]).slice(0, maxPlans);
+
+    if (uniqueAnchorOrderPlans(plans).length >= maxPlans) {
+      break;
+    }
+  }
+
+  return uniqueAnchorOrderPlans(plans).slice(0, maxPlans);
+}
+
+function endpointBucketOrderVariants(
+  endpoints: EdgeEndpointReference[],
+  manualEdgeOrder: string[] | undefined,
+  routingOptions: ResolvedRoutingOptions
+): EndpointBucketOrderVariant[] {
+  const baseVariants = baseAnchorOrderVariantIds(routingOptions)
+    .map((variantId) => ({
+      id: variantId,
+      endpoints: orderEndpointBucketVariant(endpoints, variantId, manualEdgeOrder)
+    }));
+  const variants: EndpointBucketOrderVariant[] = [];
+  const baselineVariant = baseVariants[0];
+
+  if (baselineVariant) {
+    variants.push(baselineVariant);
+  }
+
+  if (routingOptions.anchorOrderMode !== "manual" && endpoints.length >= 2 && baselineVariant) {
+    variants.push(...baseVariants.slice(1));
+    variants.push(...baseVariants.flatMap((variant) =>
+      adjacentEndpointSwapOrderVariants(variant.endpoints, `${variant.id}-adjacent`)
+    ));
+    variants.push(...singleEndpointMoveOrderVariants(baselineVariant.endpoints, "move"));
+
+    if (endpoints.length <= exactEndpointBucketPermutationLimit) {
+      variants.push(...rankedEndpointPermutationVariants(endpoints, baseVariants));
+    }
+  } else {
+    variants.push(...baseVariants.slice(1));
+  }
+
+  const unique = new Map<string, EndpointBucketOrderVariant>();
+
+  for (const variant of variants) {
+    unique.set(endpointOrderSignature(variant.endpoints), variant);
+  }
+
+  return [...unique.values()];
+}
+
+function adjacentEndpointSwapOrderVariants(
+  endpoints: EdgeEndpointReference[],
+  idPrefix: string
+): EndpointBucketOrderVariant[] {
+  const variants: EndpointBucketOrderVariant[] = [];
+
+  for (let index = 0; index < endpoints.length - 1; index += 1) {
+    const candidate = [...endpoints];
+    [candidate[index], candidate[index + 1]] = [candidate[index + 1], candidate[index]];
+    variants.push({
+      id: `${idPrefix}-${index + 1}-${index + 2}`,
+      endpoints: candidate
+    });
+  }
+
+  return variants;
+}
+
+function singleEndpointMoveOrderVariants(
+  endpoints: EdgeEndpointReference[],
+  idPrefix: string
+): EndpointBucketOrderVariant[] {
+  const variants: Array<EndpointBucketOrderVariant & { displacement: number; fromIndex: number; toIndex: number }> = [];
+
+  for (let fromIndex = 0; fromIndex < endpoints.length; fromIndex += 1) {
+    for (let toIndex = 0; toIndex < endpoints.length; toIndex += 1) {
+      if (fromIndex === toIndex) {
+        continue;
+      }
+
+      const candidate = [...endpoints];
+      const [moved] = candidate.splice(fromIndex, 1);
+      candidate.splice(toIndex, 0, moved);
+      variants.push({
+        id: `${idPrefix}-${fromIndex + 1}-${toIndex + 1}`,
+        endpoints: candidate,
+        displacement: Math.abs(toIndex - fromIndex),
+        fromIndex,
+        toIndex
       });
     }
   }
 
-  return variants.map((variant) => {
-    const assignments = new Map<string, EdgeRoutingAssignment>();
+  return variants
+    .sort((left, right) =>
+      right.displacement - left.displacement ||
+      left.fromIndex - right.fromIndex ||
+      left.toIndex - right.toIndex
+    )
+    .map(({ id, endpoints }) => ({ id, endpoints }));
+}
 
-    for (const edge of edges) {
-      const source = variant.endpointAssignments.get(endpointAssignmentKey(edge.id, "source"));
-      const target = variant.endpointAssignments.get(endpointAssignmentKey(edge.id, "target"));
+function rankedEndpointPermutationVariants(
+  endpoints: EdgeEndpointReference[],
+  referenceVariants: EndpointBucketOrderVariant[]
+): EndpointBucketOrderVariant[] {
+  const referenceOrders = referenceVariants.map((variant) => variant.endpoints);
 
-      if (source && target) {
-        assignments.set(edge.id, { source, target });
-      }
+  return permutations(sortEndpointBucket(endpoints))
+    .map((candidate, index) => ({
+      id: `perm-${index + 1}`,
+      endpoints: candidate,
+      distance: endpointOrderDistance(candidate, referenceOrders),
+      signature: endpointOrderSignature(candidate)
+    }))
+    .sort((left, right) =>
+      left.distance - right.distance ||
+      left.signature.localeCompare(right.signature)
+    )
+    .map(({ id, endpoints }) => ({ id, endpoints }));
+}
+
+function endpointOrderDistance(
+  candidate: EdgeEndpointReference[],
+  referenceOrders: EdgeEndpointReference[][]
+): number {
+  return Math.min(...referenceOrders.map((referenceOrder) => endpointOrderDisplacement(candidate, referenceOrder)));
+}
+
+function endpointOrderDisplacement(
+  candidate: EdgeEndpointReference[],
+  referenceOrder: EdgeEndpointReference[]
+): number {
+  const indexByEndpoint = new Map(referenceOrder.map((endpoint, index) => [endpointReferenceKey(endpoint), index]));
+  return candidate.reduce((total, endpoint, index) =>
+    total + Math.abs(index - (indexByEndpoint.get(endpointReferenceKey(endpoint)) ?? index)),
+  0);
+}
+
+function materializeAnchorAssignmentVariant(
+  plan: AnchorOrderPlan,
+  edges: DiagramEdge[]
+): AnchorAssignmentVariant {
+  const endpointAssignments = new Map<string, EdgeEndpointAssignment>();
+
+  for (const orderedEndpoints of plan.ordersByBucket.values()) {
+    const ratios = anchorRatiosForCount(orderedEndpoints.length);
+
+    orderedEndpoints.forEach((endpoint, index) => {
+      endpointAssignments.set(endpointAssignmentKey(endpoint.edge.id, endpoint.role), {
+        anchor: {
+          side: endpoint.side,
+          ratio: ratios[index]
+        },
+        laneIndex: index
+      });
+    });
+  }
+
+  const assignments = new Map<string, EdgeRoutingAssignment>();
+
+  for (const edge of edges) {
+    const source = endpointAssignments.get(endpointAssignmentKey(edge.id, "source"));
+    const target = endpointAssignments.get(endpointAssignmentKey(edge.id, "target"));
+
+    if (source && target) {
+      assignments.set(edge.id, { source, target });
+    }
+  }
+
+  return {
+    id: plan.id,
+    assignments
+  };
+}
+
+function cloneBucketOrders(ordersByBucket: Map<string, EdgeEndpointReference[]>): Map<string, EdgeEndpointReference[]> {
+  return new Map([...ordersByBucket].map(([bucketKey, endpoints]) => [bucketKey, [...endpoints]]));
+}
+
+function uniqueAnchorOrderPlans(plans: AnchorOrderPlan[]): AnchorOrderPlan[] {
+  const unique: AnchorOrderPlan[] = [];
+  const seen = new Set<string>();
+
+  for (const plan of plans) {
+    const signature = [...plan.ordersByBucket]
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([bucketKey, endpoints]) => `${bucketKey}:${endpointOrderSignature(endpoints)}`)
+      .join("|");
+
+    if (seen.has(signature)) {
+      continue;
     }
 
-    return {
-      id: variant.id,
-      assignments
-    };
-  });
+    seen.add(signature);
+    unique.push(plan);
+  }
+
+  return unique;
+}
+
+function endpointOrderSignature(endpoints: EdgeEndpointReference[]): string {
+  return endpoints.map((endpoint) => endpointReferenceKey(endpoint)).join(",");
+}
+
+function endpointReferenceKey(endpoint: EdgeEndpointReference): string {
+  return `${endpoint.edge.id}:${endpoint.role}`;
+}
+
+function sameEndpointOrder(left: EdgeEndpointReference[], right: EdgeEndpointReference[]): boolean {
+  return left.length === right.length && left.every((endpoint, index) =>
+    endpoint.edge.id === right[index].edge.id && endpoint.role === right[index].role
+  );
 }
 
 /**
@@ -1342,7 +1846,7 @@ function defaultRoutingOptions(): ResolvedRoutingOptions {
 }
 
 // AUTODIAGRAM CHANGE: validate/normalize routing options trước khi route.
-function resolveRoutingOptions(options: ApplyStereotypeGridLayoutOptions): ResolvedRoutingOptions {
+function resolveRoutingOptions(options: ApplyStereotypeGridLayoutOptions, lockedGroupPlacement = false): ResolvedRoutingOptions {
   const defaultOptions = defaultRoutingOptions();
   return {
     anchorOrders: options.anchorOrders?.map((order) => ({
@@ -1351,7 +1855,10 @@ function resolveRoutingOptions(options: ApplyStereotypeGridLayoutOptions): Resol
       edgeOrder: order.edgeOrder.map((edgeId, index) => requireString(edgeId, `anchor order ${order.nodeId}.${order.side}.edgeOrder[${index}]`))
     })) ?? defaultOptions.anchorOrders,
     anchorOrderMode: requireAnchorOrderMode(options.anchorOrderMode ?? defaultOptions.anchorOrderMode, "anchorOrderMode"),
-    anchorOrderVariantLimit: requirePositiveInteger(options.anchorOrderVariantLimit ?? defaultOptions.anchorOrderVariantLimit, "anchorOrderVariantLimit")
+    anchorOrderVariantLimit: requirePositiveInteger(
+      options.anchorOrderVariantLimit ?? (lockedGroupPlacement ? lockedGroupAnchorOrderVariantLimit : defaultOptions.anchorOrderVariantLimit),
+      "anchorOrderVariantLimit"
+    )
   };
 }
 
@@ -1365,10 +1872,14 @@ function anchorOrderIntentKey(nodeId: string, side: DiagramEdgeAnchorSide): stri
  * Không brute-force permutation toàn bộ vì diagram dày có thể nổ tổ hợp.
  */
 function anchorOrderVariantIds(options: ResolvedRoutingOptions): string[] {
-  const autoVariantIds = ["geometric", "reverse", "other-x", "other-y", "other-grid", "edge-id"];
+  return baseAnchorOrderVariantIds(options).slice(0, options.anchorOrderVariantLimit);
+}
+
+function baseAnchorOrderVariantIds(options: ResolvedRoutingOptions): string[] {
+  const autoVariantIds = ["geometric", "reverse", "other-x", "other-y", "other-grid", "fanout-split", "edge-id"];
 
   if (options.anchorOrderMode === "manual") {
-    return ["manual"].slice(0, options.anchorOrderVariantLimit);
+    return ["manual"];
   }
 
   if (options.anchorOrderMode === "autoWithManual" && options.anchorOrders.length > 0) {
@@ -1376,10 +1887,10 @@ function anchorOrderVariantIds(options: ResolvedRoutingOptions): string[] {
       "manual",
       ...autoVariantIds.map((variantId) => `manual-${variantId}`),
       ...autoVariantIds
-    ]).slice(0, options.anchorOrderVariantLimit);
+    ]);
   }
 
-  return autoVariantIds.slice(0, options.anchorOrderVariantLimit);
+  return autoVariantIds;
 }
 
 /**
@@ -1442,7 +1953,62 @@ function orderEndpointBucketVariant(
     );
   }
 
+  if (variantId === "fanout-split") {
+    return orderFanoutSplitEndpointBucket(endpoints);
+  }
+
   return sortEndpointBucket(endpoints);
+}
+
+function orderFanoutSplitEndpointBucket(endpoints: EdgeEndpointReference[]): EdgeEndpointReference[] {
+  if (
+    endpoints.length < 2 ||
+    !endpoints.every((endpoint) => endpoint.role === endpoints[0].role && endpoint.side === endpoints[0].side)
+  ) {
+    return sortEndpointBucket(endpoints);
+  }
+
+  const side = endpoints[0].side;
+  const useHorizontalAxis = side === "north" || side === "south";
+  const nodeCenter = centerOf(requireLayout(endpoints[0].node));
+  const before: EdgeEndpointReference[] = [];
+  const centered: EdgeEndpointReference[] = [];
+  const after: EdgeEndpointReference[] = [];
+
+  for (const endpoint of endpoints) {
+    const otherCenter = centerOf(requireLayout(endpoint.otherNode));
+    const delta = useHorizontalAxis ? otherCenter.x - nodeCenter.x : otherCenter.y - nodeCenter.y;
+
+    if (delta < 0) {
+      before.push(endpoint);
+    } else if (delta > 0) {
+      after.push(endpoint);
+    } else {
+      centered.push(endpoint);
+    }
+  }
+
+  const byDistanceThenPosition = (left: EdgeEndpointReference, right: EdgeEndpointReference): number => {
+    const leftOtherCenter = centerOf(requireLayout(left.otherNode));
+    const rightOtherCenter = centerOf(requireLayout(right.otherNode));
+    const leftDelta = useHorizontalAxis ? leftOtherCenter.x - nodeCenter.x : leftOtherCenter.y - nodeCenter.y;
+    const rightDelta = useHorizontalAxis ? rightOtherCenter.x - nodeCenter.x : rightOtherCenter.y - nodeCenter.y;
+
+    return Math.abs(leftDelta) - Math.abs(rightDelta) ||
+      endpointSortCoordinate(left) - endpointSortCoordinate(right) ||
+      left.edge.id.localeCompare(right.edge.id) ||
+      left.role.localeCompare(right.role);
+  };
+
+  return [
+    ...before.sort(byDistanceThenPosition),
+    ...centered.sort((left, right) =>
+      endpointSortCoordinate(left) - endpointSortCoordinate(right) ||
+      left.edge.id.localeCompare(right.edge.id) ||
+      left.role.localeCompare(right.role)
+    ),
+    ...after.sort(byDistanceThenPosition)
+  ];
 }
 
 /**
@@ -1823,8 +2389,11 @@ function buildRouteCandidate(
   nodeBounds: DiagramNodeLayout[]
 ): RoutedEdgeCandidate {
   const movedWaypoints = waypoints.map((waypoint) => moveWaypointOutsideNodes(waypoint, nodeBounds));
-  const points = orthogonalizePoints(removeDuplicateConsecutivePoints([sourcePoint, ...movedWaypoints, targetPoint]));
-  const cleanedPoints = removeDuplicateConsecutivePoints(points);
+  const cleanedPoints = normalizeRoutePointsForAnchors(
+    [sourcePoint, ...movedWaypoints, targetPoint],
+    sourceAnchor,
+    targetAnchor
+  );
 
   return {
     sourceAnchor,
@@ -1848,7 +2417,7 @@ function scoreRouteCandidate(
     countEdgeNodeHits([candidatePath], nodes) * scoreWeights.edgeNodeHits +
     newCrossings * scoreWeights.edgeCrossings +
     newSegmentOverlaps * scoreWeights.segmentOverlaps +
-    candidate.waypoints.length * scoreWeights.edgeBends +
+    countBends(candidate.points) * scoreWeights.edgeBends +
     pathLength(candidate.points) * scoreWeights.edgeLength
   );
 }
@@ -1933,7 +2502,7 @@ function scoreLayout(edges: DiagramEdge[], nodes: DiagramNode[], groups: Diagram
   const edgeNodeHits = countEdgeNodeHits(edgePaths, nodes);
   const segmentOverlaps = countSegmentOverlaps(edgePaths);
   const edgeCrossings = countEdgeCrossings(edgePaths);
-  const edgeBends = edges.reduce((sum, edge) => sum + (edge.layout?.waypoints?.length ?? 0), 0);
+  const edgeBends = edgePaths.reduce((sum, edgePath) => sum + countBends(edgePath.points), 0);
   const duplicateAnchors = countDuplicateAnchors(edgePaths);
   const totalEdgeLength = edgePaths.reduce((sum, edgePath) => sum + pathLength(edgePath.points), 0);
   const bounds = layoutBounds(nodes, groups);
@@ -1998,10 +2567,7 @@ function countEdgeNodeHits(edgePaths: EdgePath[], nodes: DiagramNode[]): number 
     for (const node of nodes) {
       const layout = requireLayout(node);
       for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
-        if (
-          (node.id === edgePath.edge.sourceId && segmentIndex === 0) ||
-          (node.id === edgePath.edge.targetId && segmentIndex === segments.length - 1)
-        ) {
+        if (isAllowedEndpointSegment(edgePath.edge, node.id, segments[segmentIndex], segmentIndex, segments.length)) {
           continue;
         }
 
@@ -2019,6 +2585,39 @@ function countEdgeNodeHits(edgePaths: EdgePath[], nodes: DiagramNode[]): number 
   }
 
   return hits;
+}
+
+function isAllowedEndpointSegment(
+  edge: DiagramEdge,
+  nodeId: string,
+  segment: [DiagramPoint, DiagramPoint],
+  segmentIndex: number,
+  segmentCount: number
+): boolean {
+  if (nodeId === edge.sourceId && segmentIndex === 0) {
+    const sourceAnchor = edge.layout?.sourceAnchor;
+    return sourceAnchor
+      ? endpointSegmentApproachesAnchorFromOutside(segment[0], segment[1], sourceAnchor)
+      : true;
+  }
+
+  if (nodeId === edge.targetId && segmentIndex === segmentCount - 1) {
+    const targetAnchor = edge.layout?.targetAnchor;
+    return targetAnchor
+      ? endpointSegmentApproachesAnchorFromOutside(segment[1], segment[0], targetAnchor)
+      : true;
+  }
+
+  return false;
+}
+
+function endpointSegmentApproachesAnchorFromOutside(
+  anchorPointValue: DiagramPoint,
+  neighbor: DiagramPoint,
+  anchor: DiagramEdgeAnchor
+): boolean {
+  return anchorApproachIsPerpendicular(anchorPointValue, neighbor, anchor) &&
+    pointIsOutsideAnchorSide(anchorPointValue, neighbor, anchor);
 }
 
 function countSegmentOverlaps(edgePaths: EdgePath[]): number {
@@ -2120,6 +2719,37 @@ function pathLength(points: DiagramPoint[]): number {
     0);
 }
 
+function countBends(points: DiagramPoint[]): number {
+  const axes = pathSegments(removeDuplicateConsecutivePoints(points))
+    .map(([start, end]) => segmentAxis(start, end))
+    .filter((axis): axis is string => Boolean(axis));
+  let bends = 0;
+
+  for (let index = 1; index < axes.length; index += 1) {
+    if (axes[index] !== axes[index - 1]) {
+      bends += 1;
+    }
+  }
+
+  return bends;
+}
+
+function segmentAxis(start: DiagramPoint, end: DiagramPoint): string | undefined {
+  if (pointsEqual(start, end)) {
+    return undefined;
+  }
+
+  if (isHorizontal(start, end)) {
+    return "h";
+  }
+
+  if (isVertical(start, end)) {
+    return "v";
+  }
+
+  return `d:${Math.sign(end.x - start.x)}:${Math.sign(end.y - start.y)}`;
+}
+
 function layoutBounds(nodes: DiagramNode[], groups: DiagramGroup[]): { width: number; height: number; area: number } {
   const rectangles = [
     ...nodes.map((node) => requireLayout(node)),
@@ -2158,7 +2788,35 @@ function compareScores(left: DiagramLayoutScore, right: DiagramLayoutScore): num
 }
 
 function compareRoutingVariantScores(left: DiagramLayoutScore, right: DiagramLayoutScore): number {
-  return compareScores(left, right);
+  return compareScoresWithoutEdgeLength(left, right);
+}
+
+function compareScoresWithoutEdgeLength(left: DiagramLayoutScore, right: DiagramLayoutScore): number {
+  return (
+    scoreValueWithoutEdgeLength(left) - scoreValueWithoutEdgeLength(right) ||
+    left.edgeNodeHits - right.edgeNodeHits ||
+    left.nodeOverlaps - right.nodeOverlaps ||
+    left.groupOverlaps - right.groupOverlaps ||
+    left.edgeCrossings - right.edgeCrossings ||
+    left.segmentOverlaps - right.segmentOverlaps ||
+    left.duplicateAnchors - right.duplicateAnchors ||
+    left.edgeBends - right.edgeBends
+  );
+}
+
+function scoreValueWithoutEdgeLength(score: DiagramLayoutScore): number {
+  return (
+    score.edgeNodeHits * scoreWeights.edgeNodeHits +
+    score.nodeOverlaps * scoreWeights.nodeOverlaps +
+    score.groupOverlaps * scoreWeights.groupOverlaps +
+    score.edgeCrossings * scoreWeights.edgeCrossings +
+    score.segmentOverlaps * scoreWeights.segmentOverlaps +
+    score.duplicateAnchors * scoreWeights.duplicateAnchors +
+    score.edgeBends * scoreWeights.edgeBends +
+    score.layoutWidth * scoreWeights.compactWidth +
+    score.layoutHeight * scoreWeights.compactHeight +
+    score.layoutArea * scoreWeights.compactArea
+  );
 }
 
 function uniqueCandidates(candidates: LayoutCandidatePlan[]): LayoutCandidatePlan[] {
@@ -2408,6 +3066,134 @@ function removeDuplicateConsecutivePoints(points: DiagramPoint[]): DiagramPoint[
   }
 
   return cleaned;
+}
+
+function normalizeRoutePointsForAnchors(
+  points: DiagramPoint[],
+  sourceAnchor: DiagramEdgeAnchor,
+  targetAnchor: DiagramEdgeAnchor
+): DiagramPoint[] {
+  let normalized = removeDuplicateConsecutivePoints(orthogonalizePoints(points));
+
+  for (let index = 0; index < 2; index += 1) {
+    normalized = enforceAnchorApproachDirections(normalized, sourceAnchor, targetAnchor);
+    normalized = compactOrthogonalPoints(orthogonalizePoints(removeDuplicateConsecutivePoints(normalized)));
+  }
+
+  return normalized;
+}
+
+function enforceAnchorApproachDirections(
+  points: DiagramPoint[],
+  sourceAnchor: DiagramEdgeAnchor,
+  targetAnchor: DiagramEdgeAnchor
+): DiagramPoint[] {
+  if (points.length < 2) {
+    return points;
+  }
+
+  const withSource = [
+    points[0],
+    ...anchorApproachSupportPoints(points[0], points[1], sourceAnchor, "source"),
+    ...points.slice(1)
+  ];
+  const targetPoint = withSource[withSource.length - 1];
+  const targetPrevious = withSource[withSource.length - 2];
+
+  if (!targetPrevious) {
+    return withSource;
+  }
+
+  return [
+    ...withSource.slice(0, -1),
+    ...anchorApproachSupportPoints(targetPoint, targetPrevious, targetAnchor, "target"),
+    targetPoint
+  ];
+}
+
+function anchorApproachSupportPoints(
+  anchorPointValue: DiagramPoint,
+  neighbor: DiagramPoint,
+  anchor: DiagramEdgeAnchor,
+  role: "source" | "target"
+): DiagramPoint[] {
+  if (anchorApproachIsPerpendicular(anchorPointValue, neighbor, anchor)) {
+    return [];
+  }
+
+  const projected = projectedAnchorApproachPoint(anchorPointValue, neighbor, anchor);
+  if (!pointsEqual(projected, anchorPointValue) && pointIsOutsideAnchorSide(anchorPointValue, projected, anchor)) {
+    return [projected];
+  }
+
+  const port = outsidePort(anchorPointValue, anchor, 0);
+  const bridge = anchor.side === "north" || anchor.side === "south"
+    ? { x: neighbor.x, y: port.y }
+    : { x: port.x, y: neighbor.y };
+
+  if (pointsEqual(port, bridge)) {
+    return [port];
+  }
+
+  return role === "source"
+    ? [port, bridge]
+    : [bridge, port];
+}
+
+function anchorApproachIsPerpendicular(
+  anchorPointValue: DiagramPoint,
+  neighbor: DiagramPoint,
+  anchor: DiagramEdgeAnchor
+): boolean {
+  return anchor.side === "north" || anchor.side === "south"
+    ? isVertical(anchorPointValue, neighbor)
+    : isHorizontal(anchorPointValue, neighbor);
+}
+
+function projectedAnchorApproachPoint(
+  anchorPointValue: DiagramPoint,
+  neighbor: DiagramPoint,
+  anchor: DiagramEdgeAnchor
+): DiagramPoint {
+  return anchor.side === "north" || anchor.side === "south"
+    ? { x: anchorPointValue.x, y: neighbor.y }
+    : { x: neighbor.x, y: anchorPointValue.y };
+}
+
+function pointIsOutsideAnchorSide(
+  anchorPointValue: DiagramPoint,
+  point: DiagramPoint,
+  anchor: DiagramEdgeAnchor
+): boolean {
+  if (anchor.side === "north") {
+    return point.y < anchorPointValue.y - epsilon;
+  }
+
+  if (anchor.side === "south") {
+    return point.y > anchorPointValue.y + epsilon;
+  }
+
+  if (anchor.side === "west") {
+    return point.x < anchorPointValue.x - epsilon;
+  }
+
+  return point.x > anchorPointValue.x + epsilon;
+}
+
+function compactOrthogonalPoints(points: DiagramPoint[]): DiagramPoint[] {
+  const withoutDuplicates = removeDuplicateConsecutivePoints(points);
+  return withoutDuplicates.filter((point, index, all) => {
+    if (index === 0 || index === all.length - 1) {
+      return true;
+    }
+
+    const previous = all[index - 1];
+    const next = all[index + 1];
+    return !(
+      (isVertical(previous, point) && isVertical(point, next)) ||
+      (isHorizontal(previous, point) && isHorizontal(point, next))
+    );
+  });
 }
 
 function orthogonalizePoints(points: DiagramPoint[]): DiagramPoint[] {
@@ -2668,6 +3454,10 @@ function formatScoreNumber(value: number): string {
 
 function roundRatio(value: number): number {
   return Number(value.toFixed(3));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function requireString(value: unknown, label: string): string {

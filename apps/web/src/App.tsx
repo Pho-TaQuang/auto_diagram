@@ -40,6 +40,7 @@ import {
 import "./App.css";
 import {
   cloneLayoutIntent,
+  readWebPipelineMetadata,
   runMxGraphImport,
   runWebPipeline,
   serializeMxGraphState,
@@ -61,20 +62,37 @@ type EditorSnapshot = {
   mxGraphState?: MxGraphModel;
   intentOverride?: StereotypeLayoutIntent;
 };
+type GeneratedPipelineState = {
+  key: string;
+  state: ActiveState;
+};
+type LayoutJobState = {
+  id: number;
+  key: string;
+  running: boolean;
+  title: string;
+  phase: string;
+  startedAt: number;
+  previousCandidate?: string;
+  previousScore?: DiagramLayoutScore;
+  candidate?: string;
+  score?: DiagramLayoutScore;
+  error?: string;
+};
 
 type ActiveState =
   | {
-      result: WebPipelineResult | MxGraphImportResult;
-      parsed?: WebPipelineResult["parsed"];
-      intent?: WebPipelineResult["intent"];
-      error?: undefined;
-    }
+    result: WebPipelineResult | MxGraphImportResult;
+    parsed?: WebPipelineResult["parsed"];
+    intent?: WebPipelineResult["intent"];
+    error?: undefined;
+  }
   | {
-      result?: undefined;
-      parsed?: undefined;
-      intent?: undefined;
-      error: string;
-    };
+    result?: undefined;
+    parsed?: undefined;
+    intent?: undefined;
+    error: string;
+  };
 
 const sourceModeLabels: Record<SourceMode, string> = {
   mermaid: "Mermaid",
@@ -97,9 +115,13 @@ export function App(): React.JSX.Element {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [isDark, setIsDark] = useState(false);
+  const [generatedPipeline, setGeneratedPipeline] = useState<GeneratedPipelineState | undefined>();
+  const [layoutJob, setLayoutJob] = useState<LayoutJobState | undefined>();
+  const [layoutJobTick, setLayoutJobTick] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const liveEditSnapshotRef = useRef<EditorSnapshot | undefined>(undefined);
   const liveEditChangedRef = useRef(false);
+  const layoutJobIdRef = useRef(0);
 
   // Theme toggle
   useEffect(() => {
@@ -110,19 +132,23 @@ export function App(): React.JSX.Element {
     }
   }, [isDark]);
 
+  const mermaidPipelineKey = useMemo(
+    () => mermaidLayoutKey(source, intentOverride, groupFrames),
+    [groupFrames, intentOverride, source]
+  );
+
   const activeState = useMemo<ActiveState>(() => {
     try {
       if (mxGraphState) {
         if (sourceMode === "mermaid") {
-          const generated = runWebPipeline({
+          const metadata = readWebPipelineMetadata({
             source,
-            intent: intentOverride,
-            groupFrames
+            intent: intentOverride
           });
           return {
             result: serializeMxGraphState(mxGraphState),
-            parsed: generated.parsed,
-            intent: generated.intent
+            parsed: metadata.parsed,
+            intent: metadata.intent
           };
         }
 
@@ -132,15 +158,26 @@ export function App(): React.JSX.Element {
       }
 
       if (sourceMode === "mermaid") {
-        const result = runWebPipeline({
-          source,
-          intent: intentOverride,
-          groupFrames
-        });
+        const matchingGenerated = generatedPipeline?.key === mermaidPipelineKey
+          ? generatedPipeline.state
+          : undefined;
+
+        if (matchingGenerated) {
+          return matchingGenerated;
+        }
+
+        if (layoutJob?.key === mermaidPipelineKey && layoutJob.error) {
+          return {
+            error: layoutJob.error
+          };
+        }
+
+        if (layoutJob?.running && generatedPipeline?.state.result) {
+          return generatedPipeline.state;
+        }
+
         return {
-          result,
-          parsed: result.parsed,
-          intent: result.intent
+          error: "Layout calculation is starting."
         };
       }
 
@@ -158,13 +195,18 @@ export function App(): React.JSX.Element {
         error: error instanceof Error ? error.message : String(error)
       };
     }
-  }, [groupFrames, intentOverride, mxGraphState, source, sourceMode]);
+  }, [generatedPipeline, groupFrames, intentOverride, layoutJob, mermaidPipelineKey, mxGraphState, source, sourceMode]);
 
   const result = activeState.result;
   const layoutView = result?.layoutView;
-  const layoutScore = result && "diagram" in result ? result.diagram.layout?.score : undefined;
+  const layoutScore = result
+    ? "diagram" in result
+      ? result.diagram.layout?.score
+      : result.score
+    : undefined;
   const activeXml = result?.xml ?? "";
   const activeGraph = result?.mxGraph;
+  const isLayoutRunning = Boolean(layoutJob?.running);
   const selected = selection[0] as SelectedItem;
   const selectedClass = selected?.type === "class" ? layoutView?.classes.find((classCell) => classCell.id === selected.id) : undefined;
   const selectedEdge = selected?.type === "edge" ? layoutView?.edges.find((edge) => edge.id === selected.id) : undefined;
@@ -190,7 +232,7 @@ export function App(): React.JSX.Element {
   };
 
   const captureEditorSnapshot = (): EditorSnapshot => ({
-    mxGraphState: mxGraphState ? cloneMxGraphForHistory(mxGraphState) : undefined,
+    mxGraphState: activeGraph ? cloneMxGraphForHistory(activeGraph) : undefined,
     intentOverride: intentOverride ? cloneLayoutIntent(intentOverride) : undefined
   });
 
@@ -203,6 +245,116 @@ export function App(): React.JSX.Element {
     setUndoStack((current) => appendHistory(current, snapshot));
     setRedoStack([]);
   };
+
+  useEffect(() => {
+    if (sourceMode !== "mermaid" || mxGraphState) {
+      return;
+    }
+
+    if (generatedPipeline?.key === mermaidPipelineKey) {
+      return;
+    }
+
+    const jobId = layoutJobIdRef.current + 1;
+    layoutJobIdRef.current = jobId;
+    const requestSource = source;
+    const requestIntent = intentOverride ? cloneLayoutIntent(intentOverride) : undefined;
+    const requestGroupFrames = groupFrames;
+    const previousSummary = layoutSummaryFromState(generatedPipeline?.state);
+    let timeoutId: number | undefined;
+    let frameId: number | undefined;
+    let cancelled = false;
+
+    setLayoutJob({
+      id: jobId,
+      key: mermaidPipelineKey,
+      running: true,
+      title: requestIntent ? "Applying layout intent" : "Running auto layout",
+      phase: "Preparing candidate search",
+      startedAt: Date.now(),
+      previousCandidate: previousSummary?.candidate,
+      previousScore: previousSummary?.score
+    });
+    setStatus(requestIntent ? "Applying layout intent..." : "Running auto layout...");
+
+    frameId = window.requestAnimationFrame(() => {
+      timeoutId = window.setTimeout(() => {
+        if (cancelled || layoutJobIdRef.current !== jobId) {
+          return;
+        }
+
+        try {
+          const nextResult = runWebPipeline({
+            source: requestSource,
+            intent: requestIntent,
+            groupFrames: requestGroupFrames
+          });
+          if (cancelled || layoutJobIdRef.current !== jobId) {
+            return;
+          }
+
+          setGeneratedPipeline({
+            key: mermaidPipelineKey,
+            state: {
+              result: nextResult,
+              parsed: nextResult.parsed,
+              intent: nextResult.intent
+            }
+          });
+          setLayoutJob({
+            id: jobId,
+            key: mermaidPipelineKey,
+            running: false,
+            title: "Layout complete",
+            phase: "Complete",
+            startedAt: Date.now(),
+            candidate: nextResult.diagram.layout?.selectedCandidateId,
+            score: nextResult.diagram.layout?.score
+          });
+          setStatus(layoutCompleteStatus(nextResult.diagram.layout?.score, nextResult.diagram.layout?.selectedCandidateId));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (cancelled || layoutJobIdRef.current !== jobId) {
+            return;
+          }
+
+          setGeneratedPipeline({
+            key: mermaidPipelineKey,
+            state: { error: message }
+          });
+          setLayoutJob({
+            id: jobId,
+            key: mermaidPipelineKey,
+            running: false,
+            title: "Layout failed",
+            phase: "Error",
+            startedAt: Date.now(),
+            error: message
+          });
+          setStatus("Layout failed");
+        }
+      }, 40);
+    });
+
+    return () => {
+      cancelled = true;
+      if (frameId !== undefined) {
+        window.cancelAnimationFrame(frameId);
+      }
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [generatedPipeline, groupFrames, intentOverride, mermaidPipelineKey, mxGraphState, source, sourceMode]);
+
+  useEffect(() => {
+    if (!layoutJob?.running) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => setLayoutJobTick(Date.now()), 250);
+    return () => window.clearInterval(intervalId);
+  }, [layoutJob?.running]);
 
   const updateSource = (nextSource: string): void => {
     setSource(nextSource);
@@ -460,7 +612,9 @@ export function App(): React.JSX.Element {
           <span className="toolbar-divider" />
           <ExportMenu xml={activeXml} onExportLayoutJson={exportLayoutJson} onExportSvg={exportSvg} />
           <div className="status-indicators">
-            {result ? <StatusPill kind="ok" text={status} /> : <StatusPill kind="error" text={activeState.error || "Error"} />}
+            {result || isLayoutRunning
+              ? <StatusPill kind="ok" text={isLayoutRunning ? layoutJob?.phase ?? status : status} />
+              : <StatusPill kind="error" text={activeState.error || "Error"} />}
           </div>
         </div>
       </header>
@@ -471,23 +625,28 @@ export function App(): React.JSX.Element {
             <span className="canvas-title">Preview / Edit</span>
           </div>
           {layoutView ? (
-            <DiagramPreview
-              layoutView={layoutView}
-              showGroupFrames={groupFrames}
-              selection={selection}
-              onSelect={selectItem}
-              onSelectMany={(items) => setSelection(dedupeSelection(items))}
-              onLiveEditStart={beginLiveEdit}
-              onLiveEditEnd={finishLiveEdit}
-              onClassesMove={(moves) => mutateGraph((graph) => moveClassesAndNormalizeEdges(graph, moves), "Class dragged", { live: true })}
-              onEdgeWaypointsChange={(id, waypoints) => mutateGraph((graph) => updateEdgeRoute(graph, id, { waypoints }), "Edge route dragged", { live: true })}
-              onEdgeTerminalConnect={(id, terminal, classId, anchor) => mutateGraph(
-                (graph) => connectEdgeTerminalAndRedistribute(graph, id, terminal, classId, anchor),
-                `${terminal === "source" ? "Source" : "Target"} reconnected`
-              )}
-            />
+            <>
+              <DiagramPreview
+                layoutView={layoutView}
+                showGroupFrames={groupFrames}
+                selection={selection}
+                onSelect={selectItem}
+                onSelectMany={(items) => setSelection(dedupeSelection(items))}
+                onLiveEditStart={beginLiveEdit}
+                onLiveEditEnd={finishLiveEdit}
+                onClassesMove={(moves) => mutateGraph((graph) => moveClassesAndNormalizeEdges(graph, moves), "Class dragged", { live: true })}
+                onEdgeWaypointsChange={(id, waypoints) => mutateGraph((graph) => updateEdgeRoute(graph, id, { waypoints }), "Edge route dragged", { live: true })}
+                onEdgeTerminalConnect={(id, terminal, classId, anchor) => mutateGraph(
+                  (graph) => connectEdgeTerminalAndReorderAnchors(graph, id, terminal, classId, anchor),
+                  `${terminal === "source" ? "Source" : "Target"} anchor updated`
+                )}
+              />
+              {layoutJob?.running ? <LayoutLoadingOverlay job={layoutJob} fallbackScore={layoutScore} tick={layoutJobTick} /> : null}
+            </>
           ) : (
-            <ErrorBlock message={activeState.error} />
+            layoutJob?.running
+              ? <LayoutLoadingPanel job={layoutJob} fallbackScore={layoutScore} tick={layoutJobTick} />
+              : <ErrorBlock message={activeState.error} />
           )}
         </section>
       </main>
@@ -592,14 +751,17 @@ export function App(): React.JSX.Element {
               Info
             </button>
           )}
-          <StatusPill kind={result ? "ok" : "error"} text={result ? status : (activeState.error || "Error")} />
+          <StatusPill
+            kind={result || isLayoutRunning ? "ok" : "error"}
+            text={isLayoutRunning ? layoutJob?.phase ?? status : result ? status : (activeState.error || "Error")}
+          />
         </div>
         <div className="status-right">
           {layoutView && (
             <>
               <span className="status-item">Classes: {layoutView.classes.length}</span>
               <span className="status-item">Edges: {layoutView.edges.length}</span>
-          <span className="status-item">Warnings: {diagnostics.length}</span>
+              <span className="status-item">Warnings: {diagnostics.length}</span>
             </>
           )}
           {selection.length > 0 && (
@@ -736,42 +898,44 @@ function CompactRow(props: { active: boolean; title: string; meta: string; onCli
 
 type CanvasDrag =
   | {
-      kind: "pan";
-      pointerId: number;
-      startClientX: number;
-      startClientY: number;
-      scrollLeft: number;
-      scrollTop: number;
-    }
+    kind: "pan";
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  }
   | {
-      kind: "marquee";
-      pointerId: number;
-      start: MxPoint;
-      current: MxPoint;
-    }
+    kind: "marquee";
+    pointerId: number;
+    start: MxPoint;
+    current: MxPoint;
+  }
   | {
-      kind: "class";
-      pointerId: number;
-      classId: string;
-      classMoves: Array<{ id: string; startX: number; startY: number }>;
-      offsetX: number;
-      offsetY: number;
-    }
+    kind: "class";
+    pointerId: number;
+    classId: string;
+    classMoves: Array<{ id: string; startX: number; startY: number }>;
+    currentMoves: ClassMove[];
+    offsetX: number;
+    offsetY: number;
+  }
   | {
-      kind: "segment";
-      pointerId: number;
-      edgeId: string;
-      segmentIndex: number;
-      direct: boolean;
-      baseWaypoints: MxPoint[];
-    }
+    kind: "segment";
+    pointerId: number;
+    edgeId: string;
+    segmentIndex: number;
+    direct: boolean;
+    baseWaypoints: MxPoint[];
+    currentWaypoints: MxPoint[];
+  }
   | {
-      kind: "terminal";
-      pointerId: number;
-      edgeId: string;
-      terminal: "source" | "target";
-      current: MxPoint;
-    };
+    kind: "terminal";
+    pointerId: number;
+    edgeId: string;
+    terminal: "source" | "target";
+    current: MxPoint;
+  };
 
 function DiagramPreview(props: {
   layoutView: MxLayoutViewModel;
@@ -796,6 +960,9 @@ function DiagramPreview(props: {
   const scaledWidth = contentWidth * zoom;
   const scaledHeight = contentHeight * zoom;
   const edgeHitStrokeWidth = clamp(22 / zoom, 12, 80);
+  const displayClasses = applyClassDragPreview(props.layoutView.classes, drag);
+  const displayEdges = applySegmentDragPreview(props.layoutView.edges, drag);
+  const dragCoordinate = dragCoordinateLabel(drag);
 
   useEffect(() => {
     if (stageRef.current && props.layoutView.bounds.width > 0 && props.layoutView.bounds.height > 0) {
@@ -827,6 +994,22 @@ function DiagramPreview(props: {
   const zoomBy = (factor: number): void => {
     setZoom((current) => clamp(Number((current * factor).toFixed(3)), 0.05, 5));
   };
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) {
+      return;
+    }
+
+    const preventNativeZoom = (event: globalThis.WheelEvent): void => {
+      if (event.ctrlKey) {
+        event.preventDefault();
+      }
+    };
+
+    stage.addEventListener("wheel", preventNativeZoom, { passive: false });
+    return () => stage.removeEventListener("wheel", preventNativeZoom);
+  }, []);
 
   const handleWheel = (event: WheelEvent<HTMLDivElement>): void => {
     if (!event.ctrlKey) {
@@ -897,11 +1080,14 @@ function DiagramPreview(props: {
       const nextY = snap(point.y - drag.offsetY);
       const deltaX = nextX - primary.startX;
       const deltaY = nextY - primary.startY;
-      props.onClassesMove(drag.classMoves.map((classMove) => ({
-        id: classMove.id,
-        x: snap(classMove.startX + deltaX),
-        y: snap(classMove.startY + deltaY)
-      })));
+      setDrag({
+        ...drag,
+        currentMoves: drag.classMoves.map((classMove) => ({
+          id: classMove.id,
+          x: snap(classMove.startX + deltaX),
+          y: snap(classMove.startY + deltaY)
+        }))
+      });
       return;
     }
 
@@ -910,10 +1096,10 @@ function DiagramPreview(props: {
       if (!edge) {
         return;
       }
-      props.onEdgeWaypointsChange(
-        drag.edgeId,
-        moveEdgeSegment({ ...edge, waypoints: drag.baseWaypoints }, props.layoutView.classes, drag.segmentIndex, point, drag.direct)
-      );
+      setDrag({
+        ...drag,
+        currentWaypoints: moveEdgeSegment({ ...edge, waypoints: drag.baseWaypoints }, props.layoutView.classes, drag.segmentIndex, point, drag.direct)
+      });
       return;
     }
 
@@ -943,7 +1129,17 @@ function DiagramPreview(props: {
       }
     }
 
-    if (drag.kind === "class" || drag.kind === "segment") {
+    if (drag.kind === "class") {
+      if (classMovesChanged(drag.classMoves, drag.currentMoves)) {
+        props.onClassesMove(drag.currentMoves);
+      }
+      props.onLiveEditEnd();
+    }
+
+    if (drag.kind === "segment") {
+      if (!samePoints(drag.baseWaypoints, drag.currentWaypoints)) {
+        props.onEdgeWaypointsChange(drag.edgeId, drag.currentWaypoints);
+      }
       props.onLiveEditEnd();
     }
 
@@ -988,6 +1184,10 @@ function DiagramPreview(props: {
         const selectedClass = classById.get(classId);
         return selectedClass ? [{ id: classId, startX: selectedClass.x, startY: selectedClass.y }] : [];
       }),
+      currentMoves: classIds.flatMap((classId) => {
+        const selectedClass = classById.get(classId);
+        return selectedClass ? [{ id: classId, x: selectedClass.x, y: selectedClass.y }] : [];
+      }),
       offsetX: point.x - classCell.x,
       offsetY: point.y - classCell.y
     });
@@ -1009,7 +1209,8 @@ function DiagramPreview(props: {
       edgeId: edge.id,
       segmentIndex,
       direct: edge.waypoints.length === 0,
-      baseWaypoints: edge.waypoints.map((waypoint) => ({ ...waypoint }))
+      baseWaypoints: edge.waypoints.map((waypoint) => ({ ...waypoint })),
+      currentWaypoints: edge.waypoints.map((waypoint) => ({ ...waypoint }))
     });
   };
 
@@ -1079,11 +1280,11 @@ function DiagramPreview(props: {
             <text x={group.x - 8} y={group.y - 8}>{group.label}</text>
           </g>
         )) : null}
-        {props.layoutView.edges.map((edge) => (
+        {displayEdges.map((edge) => (
           <PreviewEdge
             key={edge.id}
             edge={edge}
-            classes={props.layoutView.classes}
+            classes={displayClasses}
             selected={isSelectionItemSelected(props.selection, { type: "edge", id: edge.id })}
             hitStrokeWidth={edgeHitStrokeWidth}
             terminalPreview={drag?.kind === "terminal" && drag.edgeId === edge.id ? drag : undefined}
@@ -1099,7 +1300,7 @@ function DiagramPreview(props: {
             onTerminalPointerDown={beginTerminalDrag}
           />
         ))}
-        {props.layoutView.classes.map((classCell) => (
+        {displayClasses.map((classCell) => (
           <PreviewClass
             key={classCell.id}
             classCell={classCell}
@@ -1107,9 +1308,98 @@ function DiagramPreview(props: {
             onPointerDown={(event) => beginClassDrag(event, classCell)}
           />
         ))}
+        {dragCoordinate ? (
+          <g className="drag-coordinate">
+            <rect x={dragCoordinate.x + 10} y={dragCoordinate.y - 30} width={dragCoordinate.width} height="24" rx="4" />
+            <text x={dragCoordinate.x + 18} y={dragCoordinate.y - 14}>{dragCoordinate.text}</text>
+          </g>
+        ) : null}
         {marquee ? <rect className="marquee" x={marquee.x} y={marquee.y} width={marquee.width} height={marquee.height} /> : null}
       </svg>
     </div>
+  );
+}
+
+function applyClassDragPreview(classes: MxLayoutClass[], drag: CanvasDrag | undefined): MxLayoutClass[] {
+  if (drag?.kind !== "class") {
+    return classes;
+  }
+
+  const moveById = new Map(drag.currentMoves.map((move) => [move.id, move]));
+  return classes.map((classCell) => {
+    const move = moveById.get(classCell.id);
+    return move ? { ...classCell, x: move.x, y: move.y } : classCell;
+  });
+}
+
+function applySegmentDragPreview(edges: MxLayoutEdge[], drag: CanvasDrag | undefined): MxLayoutEdge[] {
+  if (drag?.kind !== "segment") {
+    return edges;
+  }
+
+  return edges.map((edge) => edge.id === drag.edgeId
+    ? {
+      ...edge,
+      waypoints: drag.currentWaypoints.map((waypoint) => ({ ...waypoint }))
+    }
+    : edge);
+}
+
+function dragCoordinateLabel(drag: CanvasDrag | undefined): { x: number; y: number; width: number; text: string } | undefined {
+  if (drag?.kind === "class") {
+    const primaryMove = drag.currentMoves.find((move) => move.id === drag.classId);
+    if (!primaryMove) {
+      return undefined;
+    }
+
+    const text = `x ${Math.round(primaryMove.x)}, y ${Math.round(primaryMove.y)}`;
+    return {
+      x: primaryMove.x,
+      y: primaryMove.y,
+      width: coordinateLabelWidth(text),
+      text
+    };
+  }
+
+  if (drag?.kind === "segment" && drag.currentWaypoints.length > 0) {
+    const waypoint = drag.currentWaypoints[Math.min(drag.segmentIndex, drag.currentWaypoints.length - 1)];
+    const text = `x ${Math.round(waypoint.x)}, y ${Math.round(waypoint.y)}`;
+    return {
+      x: waypoint.x,
+      y: waypoint.y,
+      width: coordinateLabelWidth(text),
+      text
+    };
+  }
+
+  if (drag?.kind === "terminal") {
+    const text = `x ${Math.round(drag.current.x)}, y ${Math.round(drag.current.y)}`;
+    return {
+      x: drag.current.x,
+      y: drag.current.y,
+      width: coordinateLabelWidth(text),
+      text
+    };
+  }
+
+  return undefined;
+}
+
+function coordinateLabelWidth(text: string): number {
+  return Math.max(88, text.length * 7 + 18);
+}
+
+function classMovesChanged(startMoves: Array<{ id: string; startX: number; startY: number }>, currentMoves: ClassMove[]): boolean {
+  const currentById = new Map(currentMoves.map((move) => [move.id, move]));
+  return startMoves.some((startMove) => {
+    const currentMove = currentById.get(startMove.id);
+    return Boolean(currentMove && (currentMove.x !== startMove.startX || currentMove.y !== startMove.startY));
+  });
+}
+
+function samePoints(left: MxPoint[], right: MxPoint[]): boolean {
+  return left.length === right.length && left.every((point, index) =>
+    point.x === right[index].x && point.y === right[index].y
   );
 }
 
@@ -1264,17 +1554,43 @@ function SummaryPanel(props: { layoutView: MxLayoutViewModel; parsed?: WebPipeli
   );
 }
 
-function connectEdgeTerminalAndRedistribute(
+type EdgeTerminal = "source" | "target";
+type AnchorEndpoint = {
+  edge: MxLayoutEdge;
+  terminal: EdgeTerminal;
+  ratio: number;
+};
+
+function connectEdgeTerminalAndReorderAnchors(
   graph: MxGraphModel,
   edgeId: string,
-  terminal: "source" | "target",
+  terminal: EdgeTerminal,
   classId: string,
   anchor: MxAnchor
 ): MxGraphModel {
+  const previousEdge = extractLayoutViewModel(graph).edges.find((edge) => edge.id === edgeId);
+  const previousClassId = terminal === "source" ? previousEdge?.sourceId : previousEdge?.targetId;
+  const previousAnchor = terminal === "source" ? previousEdge?.sourceAnchor : previousEdge?.targetAnchor;
+  const changedEdgeIds = new Set<string>([edgeId]);
+
   let next = updateEdgeTerminal(graph, edgeId, terminal === "source" ? { sourceId: classId } : { targetId: classId });
   next = updateEdgeRoute(next, edgeId, terminal === "source" ? { sourceAnchor: anchor } : { targetAnchor: anchor });
-  next = redistributeAnchorsOnSide(next, classId, anchor.side);
-  return normalizeEdgesById(next, new Set([edgeId]));
+
+  if (previousClassId && previousAnchor && (previousClassId !== classId || previousAnchor.side !== anchor.side)) {
+    const previousSideOrder = reorderAnchorsOnSide(next, previousClassId, previousAnchor.side);
+    next = previousSideOrder.graph;
+    previousSideOrder.edgeIds.forEach((changedEdgeId) => changedEdgeIds.add(changedEdgeId));
+  }
+
+  const nextSideOrder = reorderAnchorsOnSide(next, classId, anchor.side, {
+    edgeId,
+    terminal,
+    ratio: anchor.ratio
+  });
+  next = nextSideOrder.graph;
+  nextSideOrder.edgeIds.forEach((changedEdgeId) => changedEdgeIds.add(changedEdgeId));
+
+  return rerouteEdgesById(next, changedEdgeIds);
 }
 
 function moveClassesAndNormalizeEdges(graph: MxGraphModel, moves: ClassMove[]): MxGraphModel {
@@ -1309,17 +1625,50 @@ function normalizeEdgesById(graph: MxGraphModel, edgeIds: Set<string>): MxGraphM
     .reduce((next, edge) => updateEdgeRoute(next, edge.id, { waypoints: orthogonalizeWaypoints(edge, view.classes) }), graph);
 }
 
-function redistributeAnchorsOnSide(graph: MxGraphModel, classId: string, side: MxAnchorSide): MxGraphModel {
+function rerouteEdgesById(graph: MxGraphModel, edgeIds: Set<string>): MxGraphModel {
+  if (edgeIds.size === 0) {
+    return graph;
+  }
+
   const view = extractLayoutViewModel(graph);
-  const classById = new Map(view.classes.map((classCell) => [classCell.id, classCell]));
-  const endpoints = view.edges.flatMap((edge) => {
-    const items: Array<{ edge: MxLayoutEdge; terminal: "source" | "target"; sort: number }> = [];
+  return view.edges
+    .filter((edge) => edgeIds.has(edge.id))
+    .reduce((next, edge) => updateEdgeRoute(next, edge.id, { waypoints: orthogonalizeWaypoints(edge, view.classes, []) }), graph);
+}
+
+function reorderAnchorsOnSide(
+  graph: MxGraphModel,
+  classId: string,
+  side: MxAnchorSide,
+  moved?: { edgeId: string; terminal: EdgeTerminal; ratio: number }
+): { graph: MxGraphModel; edgeIds: Set<string> } {
+  const view = extractLayoutViewModel(graph);
+  const endpoints = collectAnchorEndpoints(view.edges, classId, side);
+  if (endpoints.length === 0) {
+    return { graph, edgeIds: new Set() };
+  }
+
+  const ordered = moved ? reorderMovedEndpoint(endpoints, moved) : [...endpoints].sort(compareAnchorEndpoints);
+  const edgeIds = new Set<string>();
+  const nextGraph = ordered.reduce((next, endpoint, index) => {
+    const ratio = (index + 1) / (endpoints.length + 1);
+    const anchor = { side, ratio };
+    edgeIds.add(endpoint.edge.id);
+    return updateEdgeRoute(next, endpoint.edge.id, endpoint.terminal === "source" ? { sourceAnchor: anchor } : { targetAnchor: anchor });
+  }, graph);
+
+  return { graph: nextGraph, edgeIds };
+}
+
+function collectAnchorEndpoints(edges: MxLayoutEdge[], classId: string, side: MxAnchorSide): AnchorEndpoint[] {
+  return edges.flatMap((edge) => {
+    const items: AnchorEndpoint[] = [];
 
     if (edge.sourceId === classId && edge.sourceAnchor?.side === side) {
       items.push({
         edge,
         terminal: "source",
-        sort: oppositeClassSort(edge.targetId, side, classById)
+        ratio: edge.sourceAnchor.ratio
       });
     }
 
@@ -1327,33 +1676,42 @@ function redistributeAnchorsOnSide(graph: MxGraphModel, classId: string, side: M
       items.push({
         edge,
         terminal: "target",
-        sort: oppositeClassSort(edge.sourceId, side, classById)
+        ratio: edge.targetAnchor.ratio
       });
     }
 
     return items;
-  }).sort((first, second) => first.sort - second.sort || first.edge.id.localeCompare(second.edge.id));
-
-  return endpoints.reduce((next, endpoint, index) => {
-    const ratio = (index + 1) / (endpoints.length + 1);
-    const anchor = { side, ratio };
-    return updateEdgeRoute(next, endpoint.edge.id, endpoint.terminal === "source" ? { sourceAnchor: anchor } : { targetAnchor: anchor });
-  }, graph);
+  });
 }
 
-function oppositeClassSort(
-  classId: string | undefined,
-  side: MxAnchorSide,
-  classById: Map<string, MxLayoutClass>
-): number {
-  const classCell = classId ? classById.get(classId) : undefined;
-  if (!classCell) {
-    return 0;
+function reorderMovedEndpoint(
+  endpoints: AnchorEndpoint[],
+  moved: { edgeId: string; terminal: EdgeTerminal; ratio: number }
+): AnchorEndpoint[] {
+  const movedEndpoint = endpoints.find((endpoint) => endpoint.edge.id === moved.edgeId && endpoint.terminal === moved.terminal);
+  if (!movedEndpoint) {
+    return [...endpoints].sort(compareAnchorEndpoints);
   }
 
-  const centerX = classCell.x + classCell.width / 2;
-  const centerY = classCell.y + classCell.height / 2;
-  return side === "left" || side === "right" ? centerY : centerX;
+  const stationary = endpoints
+    .filter((endpoint) => endpoint !== movedEndpoint)
+    .sort(compareAnchorEndpoints);
+  const insertIndex = stationary.filter((endpoint) => endpoint.ratio <= moved.ratio).length;
+
+  return [
+    ...stationary.slice(0, insertIndex),
+    { ...movedEndpoint, ratio: moved.ratio },
+    ...stationary.slice(insertIndex)
+  ];
+}
+
+function compareAnchorEndpoints(first: AnchorEndpoint, second: AnchorEndpoint): number {
+  const ratioOrder = first.ratio - second.ratio;
+  if (Math.abs(ratioOrder) > 0.000001) {
+    return ratioOrder;
+  }
+
+  return first.edge.id.localeCompare(second.edge.id) || first.terminal.localeCompare(second.terminal);
 }
 
 function buildSegmentHandles(points: MxPoint[]): Array<MxPoint & { segmentIndex: number; orientation: "horizontal" | "vertical" }> {
@@ -1460,15 +1818,40 @@ function orthogonalizeWaypoints(edge: MxLayoutEdge, classes: MxLayoutClass[], wa
   return orthogonalWaypointsBetween(
     anchorPoint(source, edge.sourceAnchor),
     anchorPoint(target, edge.targetAnchor),
-    waypoints
+    waypoints,
+    edge.sourceAnchor,
+    edge.targetAnchor
   );
 }
 
-function orthogonalWaypointsBetween(source: MxPoint, target: MxPoint, waypoints: MxPoint[]): MxPoint[] {
+function orthogonalWaypointsBetween(
+  source: MxPoint,
+  target: MxPoint,
+  waypoints: MxPoint[],
+  sourceAnchor?: MxAnchor,
+  targetAnchor?: MxAnchor
+): MxPoint[] {
   const full = [source, ...compactWaypoints(waypoints), target].map((point) => ({ x: snap(point.x), y: snap(point.y) }));
-  const normalized: MxPoint[] = [full[0]];
+  const normalized = normalizeEndpointApproach(full, sourceAnchor, targetAnchor);
 
-  for (const nextPoint of full.slice(1)) {
+  return compactOrthogonalPoints(normalized).slice(1, -1);
+}
+
+function normalizeEndpointApproach(points: MxPoint[], sourceAnchor?: MxAnchor, targetAnchor?: MxAnchor): MxPoint[] {
+  let normalized = orthogonalizePointList(points);
+
+  for (let index = 0; index < 2; index += 1) {
+    normalized = enforceEndpointApproach(normalized, sourceAnchor, targetAnchor);
+    normalized = compactOrthogonalPoints(orthogonalizePointList(normalized));
+  }
+
+  return normalized;
+}
+
+function orthogonalizePointList(points: MxPoint[]): MxPoint[] {
+  const normalized: MxPoint[] = [points[0]];
+
+  for (const nextPoint of points.slice(1)) {
     const last = normalized[normalized.length - 1];
     if (!last) {
       normalized.push(nextPoint);
@@ -1483,7 +1866,101 @@ function orthogonalWaypointsBetween(source: MxPoint, target: MxPoint, waypoints:
     normalized.push({ x: nextPoint.x, y: last.y }, nextPoint);
   }
 
-  return compactOrthogonalPoints(normalized).slice(1, -1);
+  return compactWaypoints(normalized);
+}
+
+function enforceEndpointApproach(points: MxPoint[], sourceAnchor?: MxAnchor, targetAnchor?: MxAnchor): MxPoint[] {
+  if (points.length < 2 || !sourceAnchor || !targetAnchor) {
+    return points;
+  }
+
+  const withSource = [
+    points[0],
+    ...endpointApproachSupportPoints(points[0], points[1], sourceAnchor, "source"),
+    ...points.slice(1)
+  ];
+  const targetPoint = withSource[withSource.length - 1];
+  const targetPrevious = withSource[withSource.length - 2];
+
+  if (!targetPrevious) {
+    return withSource;
+  }
+
+  return [
+    ...withSource.slice(0, -1),
+    ...endpointApproachSupportPoints(targetPoint, targetPrevious, targetAnchor, "target"),
+    targetPoint
+  ];
+}
+
+function endpointApproachSupportPoints(anchorPointValue: MxPoint, neighbor: MxPoint, anchor: MxAnchor, role: "source" | "target"): MxPoint[] {
+  if (endpointApproachIsPerpendicular(anchorPointValue, neighbor, anchor)) {
+    return [];
+  }
+
+  const projected = projectedEndpointApproachPoint(anchorPointValue, neighbor, anchor);
+  if (!samePoint(projected, anchorPointValue) && pointIsOutsideEndpointSide(anchorPointValue, projected, anchor)) {
+    return [projected];
+  }
+
+  const port = outsideAnchorPort(anchorPointValue, anchor);
+  const bridge = anchor.side === "top" || anchor.side === "bottom"
+    ? { x: neighbor.x, y: port.y }
+    : { x: port.x, y: neighbor.y };
+
+  if (samePoint(port, bridge)) {
+    return [port];
+  }
+
+  return role === "source"
+    ? [port, bridge]
+    : [bridge, port];
+}
+
+function endpointApproachIsPerpendicular(anchorPointValue: MxPoint, neighbor: MxPoint, anchor: MxAnchor): boolean {
+  return anchor.side === "top" || anchor.side === "bottom"
+    ? anchorPointValue.x === neighbor.x
+    : anchorPointValue.y === neighbor.y;
+}
+
+function projectedEndpointApproachPoint(anchorPointValue: MxPoint, neighbor: MxPoint, anchor: MxAnchor): MxPoint {
+  return anchor.side === "top" || anchor.side === "bottom"
+    ? { x: anchorPointValue.x, y: neighbor.y }
+    : { x: neighbor.x, y: anchorPointValue.y };
+}
+
+function pointIsOutsideEndpointSide(anchorPointValue: MxPoint, point: MxPoint, anchor: MxAnchor): boolean {
+  if (anchor.side === "top") {
+    return point.y < anchorPointValue.y;
+  }
+
+  if (anchor.side === "bottom") {
+    return point.y > anchorPointValue.y;
+  }
+
+  if (anchor.side === "left") {
+    return point.x < anchorPointValue.x;
+  }
+
+  return point.x > anchorPointValue.x;
+}
+
+function outsideAnchorPort(point: MxPoint, anchor: MxAnchor): MxPoint {
+  const distance = 24;
+
+  if (anchor.side === "top") {
+    return { x: point.x, y: point.y - distance };
+  }
+
+  if (anchor.side === "bottom") {
+    return { x: point.x, y: point.y + distance };
+  }
+
+  if (anchor.side === "left") {
+    return { x: point.x - distance, y: point.y };
+  }
+
+  return { x: point.x + distance, y: point.y };
 }
 
 function compactOrthogonalPoints(points: MxPoint[]): MxPoint[] {
@@ -1504,6 +1981,10 @@ function compactWaypoints(waypoints: MxPoint[]): MxPoint[] {
     const previous = all[index - 1];
     return !previous || previous.x !== point.x || previous.y !== point.y;
   });
+}
+
+function samePoint(left: MxPoint, right: MxPoint): boolean {
+  return left.x === right.x && left.y === right.y;
 }
 
 function findClassSideAtPoint(classes: MxLayoutClass[], point: MxPoint): { classId: string; side: MxAnchorSide; ratio: number } | undefined {
@@ -2632,6 +3113,50 @@ function ErrorBlock(props: { message: string | undefined }): React.JSX.Element {
   );
 }
 
+function LayoutLoadingPanel(props: { job: LayoutJobState; fallbackScore?: DiagramLayoutScore; tick: number }): React.JSX.Element {
+  return (
+    <div className="layout-loading-panel">
+      <LayoutLoadingCard {...props} />
+    </div>
+  );
+}
+
+function LayoutLoadingOverlay(props: { job: LayoutJobState; fallbackScore?: DiagramLayoutScore; tick: number }): React.JSX.Element {
+  return (
+    <div className="layout-loading-overlay" aria-live="polite">
+      <LayoutLoadingCard {...props} />
+    </div>
+  );
+}
+
+function LayoutLoadingCard(props: { job: LayoutJobState; fallbackScore?: DiagramLayoutScore; tick: number }): React.JSX.Element {
+  const score = props.job.score ?? props.job.previousScore ?? props.fallbackScore;
+  const candidate = props.job.candidate ?? props.job.previousCandidate ?? "candidate search";
+  const elapsedSeconds = Math.max(0, (props.tick || Date.now()) - props.job.startedAt) / 1000;
+
+  return (
+    <div className="layout-loading-card">
+      <div className="layout-loading-title">
+        <span className="layout-spinner" aria-hidden="true" />
+        <strong>{props.job.title}</strong>
+      </div>
+      <div className="layout-loading-phase">{props.job.phase}</div>
+      <div className="layout-loading-strip" aria-hidden="true">
+        <span>original</span>
+        <span>degree</span>
+        <span>fanout split</span>
+        <span>bucket variants</span>
+      </div>
+      <div className="layout-loading-metrics">
+        <span>Candidate: {shortCandidateLabel(candidate)}</span>
+        <span>Crossings: {formatScoreValue(score?.edgeCrossings)}</span>
+        <span>Bends: {formatScoreValue(score?.edgeBends)}</span>
+        <span>{elapsedSeconds.toFixed(1)}s</span>
+      </div>
+    </div>
+  );
+}
+
 function Metric(props: { label: string; value: string }): React.JSX.Element {
   return (
     <div className="metric">
@@ -2852,6 +3377,54 @@ function toNumber(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function mermaidLayoutKey(source: string, intent: StereotypeLayoutIntent | undefined, groupFrames: boolean): string {
+  return JSON.stringify({
+    source,
+    intent: intent ?? null,
+    groupFrames
+  });
+}
+
+function layoutSummaryFromState(state: ActiveState | undefined): { candidate?: string; score?: DiagramLayoutScore } | undefined {
+  const result = state?.result;
+  if (!result) {
+    return undefined;
+  }
+
+  if ("diagram" in result) {
+    return {
+      candidate: result.diagram.layout?.selectedCandidateId,
+      score: result.diagram.layout?.score
+    };
+  }
+
+  return {
+    score: result.score
+  };
+}
+
+function layoutCompleteStatus(score: DiagramLayoutScore | undefined, candidate: string | undefined): string {
+  const parts = [
+    "Layout complete",
+    `crossings ${formatScoreValue(score?.edgeCrossings)}`,
+    `bends ${formatScoreValue(score?.edgeBends)}`
+  ];
+
+  if (candidate) {
+    parts.push(shortCandidateLabel(candidate));
+  }
+
+  return parts.join(" | ");
+}
+
+function shortCandidateLabel(candidate: string): string {
+  if (candidate.length <= 42) {
+    return candidate;
+  }
+
+  return `${candidate.slice(0, 20)}...${candidate.slice(-18)}`;
+}
+
 function appendHistory(history: EditorSnapshot[], snapshot: EditorSnapshot): EditorSnapshot[] {
   const maxHistory = 80;
   return [...history, cloneEditorSnapshot(snapshot)].slice(-maxHistory);
@@ -2872,9 +3445,9 @@ function cloneMxGraphForHistory(model: MxGraphModel): MxGraphModel {
       attributes: { ...cell.attributes },
       geometry: cell.geometry
         ? {
-            attributes: { ...cell.geometry.attributes },
-            waypoints: cell.geometry.waypoints.map((point) => ({ ...point }))
-          }
+          attributes: { ...cell.geometry.attributes },
+          waypoints: cell.geometry.waypoints.map((point) => ({ ...point }))
+        }
         : undefined
     }))
   };

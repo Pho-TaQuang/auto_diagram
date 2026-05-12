@@ -1083,11 +1083,14 @@ Decision:
 - Edges sharing a source side receive separate orthogonal lanes so they do not all stack on the same segment.
 - Programmatic callers may provide anchorOrders, anchorOrderMode, and anchorOrderVariantLimit to control endpoint ordering on a node side.
 - Auto anchor-order variants may change endpoint order when the full route score improves, including cases where a longer orthogonal detour reduces crossings.
-- The scored layout search may reorder classes inside a fixed stereotype group using bounded reverse, degree-based, and name-based variants when the resulting score improves.
+- The scored layout search may reorder classes inside a fixed stereotype group using bounded reverse, degree-based, name-based, and small permutation variants when the resulting score improves.
 - Explicit layout intent locks group grid positions. After a user saves a group grid preset, reruns may reroute edges and reorder classes inside each group, but must not auto-move groups to different grid cells.
 - Draw.io export serializes routed bend/control points in `<Array as="points">` as plain `<mxPoint x="..." y="..." />` entries; it does not emit `sourcePoint` or `targetPoint`.
 - Route scoring works on vectorized orthogonal segments and penalizes non-terminal class hits, segment overlaps, crossings, duplicate anchors, bends, Manhattan route length, and layout area. Crossing penalties are intentionally much larger than bend and length penalties so longer routes can win when they reduce crossing count.
+- Fixed-grid reruns use a larger bounded search budget and try local anchor-order variants per node side, including split fan-out and bounded bucket permutations, so explicit grid presets can still find crossing-reducing detours instead of falling back to the original edge order.
+- After selecting the winning routed layout, a post-routing refinement pass may move anchors away from evenly spaced `1/(n+1)` ratios or onto a better adjacent side, then rewrite edge waypoints, but only when the full layout score improves.
 - The web UI exposes the generated layout score, crossing count, node-hit count, and bend count in the summary panel.
+- Mermaid layout calculation should leave render first, then show a lightweight loading overlay with compact candidate/score context while the synchronous layout job runs.
 - Group-grid popup edits are draft-only. Opening the popup should derive the matrix from the currently displayed layout until the user saves a grid preset; after that, opening the popup should use the saved preset. Moving, resizing, or rotating groups in the matrix should not run layout until the user presses Save.
 - Python relayout scripts remain reference material only, not runtime dependencies.
 ```
@@ -1153,7 +1156,8 @@ Decision:
 - Dragging a segment midpoint moves that segment along its perpendicular axis and updates the edge Array as="points".
 - Segment edits must preserve orthogonal route geometry. If an imported or intermediate route contains a diagonal segment, the edit path is normalized back to horizontal/vertical segments before writing mxPoint[].
 - Dragging source/target terminal handles onto a class side updates the edge source/target cell and computes side anchors.
-- When a terminal connects to a class side, anchors on that side are redistributed with evenly spaced ratios.
+- Dropping a terminal handle on a class side uses that drop position to reorder anchors on the side; dragging anchor A to the right/below anchor B makes B appear before A in the side order.
+- After a terminal drop, anchors on that side are redistributed with evenly spaced ratios in the user-controlled order.
 - These interactions are layout edits only. They do not edit UML semantic content or convert SVG back into mxGraph.
 ```
 

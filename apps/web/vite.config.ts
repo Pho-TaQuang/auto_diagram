@@ -11,7 +11,7 @@ export default defineConfig({
   plugins: [react()],
   publicDir: false,
   build: {
-    outDir: path.resolve(repoRoot, "dist/apps/web"),
+    outDir: path.resolve(repoRoot, "dist/apps/web-build"),
     emptyOutDir: true
   },
   server: {

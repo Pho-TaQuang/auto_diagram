@@ -123,9 +123,9 @@ function exportsThreeClassCompartments(): void {
   ].join("\n"));
   const cells = asArray(parseXml(xml).mxGraphModel.root.mxCell);
 
-  assertClassCompartments(cells, "node_MethodOnly", 40, 30, 8);
-  assertClassCompartments(cells, "node_AttributeOnly", 40, 30, 8);
-  assertClassCompartments(cells, "node_EmptyClass", 40, 30, 8);
+  assertClassCompartments(cells, "node_1", 40, 30, 8);
+  assertClassCompartments(cells, "node_2", 40, 30, 8);
+  assertClassCompartments(cells, "node_3", 40, 30, 8);
 }
 
 function exportsTheDmLoaiLucLuongFixture(): void {

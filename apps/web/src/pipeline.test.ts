@@ -60,8 +60,8 @@ function appliesEditableLayoutIntent(): void {
 
   const result = runWebPipeline({ source: fixture, intent, groupFrames: true });
   const cells = asArray(parseXml(result.xml).mxGraphModel.root.mxCell);
-  const controllerFrame = cells.find((cell) => cell.id === "group_frame_group_stereotype_Controller");
-  const managerFrame = cells.find((cell) => cell.id === "group_frame_group_stereotype_ManagerInterface");
+  const controllerFrame = cells.find((cell) => cell.value === "Controller");
+  const managerFrame = cells.find((cell) => cell.value === "ManagerInterface");
 
   assert.ok(controllerFrame);
   assert.ok(managerFrame);

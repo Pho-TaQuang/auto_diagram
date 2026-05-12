@@ -12,6 +12,7 @@ docs/demo_mermaid.md -> DiagramDocument -> deterministic layout -> mxGraphModel 
 
 The output intentionally uses raw `<mxGraphModel>` XML rather than a compressed draw.io file or an `<mxfile>` wrapper.
 Class nodes are exported as draw.io swimlanes with explicit header sizing so stereotypes and class names stay together in the title compartment.
+Exported draw.io cell IDs are deterministic type counters such as `node_1`, `edge_1`, and `group_frame_1`; semantic class names stay in labels and the intermediate model.
 
 ## MVP 1 Hardening Baseline
 
@@ -76,7 +77,7 @@ Class swimlanes always reserve the standard UML compartments in this order: clas
 
 The router chooses side anchors on class bounds and spaces all endpoints on the same class side evenly. For `n` endpoints on one side, anchor ratios are `(index + 1) / (n + 1)`, so endpoints stay equally distant from each other and from both side corners. Endpoints sharing the same class side are ordered by the opposite class position; on east/west sides this follows target Y position, and on north/south sides this follows target X position. Downward fan-out from a source group to lower-row target groups is row-aware: source anchors use the south side and lower-left or lower-right targets are ordered nearest-to-farthest to avoid weaving. Routing now processes edges whose source and target groups are in the same grid row or same grid column first; remaining diagonal group-to-group edges are routed afterward against the already selected paths. Later edges first choose candidates that do not hit nodes, overlap earlier segments, or cross earlier routes; if no clean candidate exists, scoring falls back to the least costly generated route. Candidate generation includes direct, gutter, local under-row, and exterior-lane orthogonal paths. Candidate scoring vectorizes orthogonal edge segments and strongly penalizes crossings before bends and Manhattan route length, so the router can prefer longer detours when they reduce crossing count.
 
-The scored layout search can also reorder classes inside a stereotype group when the placement is otherwise fixed. It evaluates bounded original, reverse, degree-based, and name-based class-order variants per group and keeps the resulting layout only when its score wins. When callers provide explicit layout intent, group grid positions are locked; the engine only repacks classes inside those groups and reroutes edges.
+The scored layout search can also reorder classes inside a stereotype group when the placement is otherwise fixed. It evaluates bounded original, reverse, degree-based, name-based, and small permutation class-order variants per group and keeps the resulting layout only when its score wins. When callers provide explicit layout intent, group grid positions are locked; the engine only repacks classes inside those groups, tries local anchor-order variants per node side, including split fan-out and bounded bucket permutations, and reroutes edges. After the winning layout is selected, a local refinement pass may move anchors to projected non-even ratios or adjacent sides and rewrite waypoints when the full layout score improves.
 
 Programmatic layout callers can optionally pass `anchorOrders`, `anchorOrderMode`, and `anchorOrderVariantLimit` to control endpoint ordering on a specific node side. Auto mode evaluates a bounded set of endpoint-order variants and may choose a different anchor order when the full route score improves.
 
@@ -102,6 +103,7 @@ The first screen is the tool workflow:
 - import raw `<mxGraphModel>` XML or an uncompressed `.drawio` file
 - inspect compact classes, edges, groups, extends/realization relationships, diagnostics, and layout data
 - keep diagnostics readable with a bounded warning log area and clamped message rows
+- show a lightweight loading overlay during Mermaid layout calculation with compact candidate/score context
 - open Grid Intent as a popup that derives its initial matrix from the currently displayed layout until the user saves a grid preset, stage logical stereotype group placement on a 10x10 or 15x15 matrix, then reroute and apply the layout only when Save is pressed
 - edit layout-safe fields such as class geometry, edge segment routes, and edge terminals without editing UML semantics
 - adjust stereotype group layout in a large popup 10x10 or 15x15 group-grid matrix, including drag-and-drop group placement with rounded x/y drop preview, compact estimated group footprints, and per-group vertical/horizontal packing rotation recalculated from class sizes
@@ -118,7 +120,7 @@ The first screen is the tool workflow:
 - select edges through a zoom-aware enlarged hit target
 - select an edge and drag segment midpoint handles perpendicular to that segment to update the edge route
 - keep edited edge routes orthogonal after segment drags and after class moves
-- drag source/target terminal handles onto a class side to reconnect the relationship and redistribute anchors on that side
+- drag source/target terminal handles onto a class side to reconnect the relationship or reorder anchors on that side by drop position
 - download `.drawio`, layout JSON, SVG preview, or copy raw `mxGraphModel` XML
 
 The web UI does not embed the draw.io editor. Manual draw.io shape editing is intentionally out of scope. SVG export is a preview artifact only; AutoDiagram never converts SVG back to `mxGraphModel`.
@@ -175,6 +177,8 @@ Build the web UI:
 npm run web:build
 ```
 
+The production web bundle is written to `dist/apps/web-build` so it does not collide with TypeScript build output.
+
 Generate the sample with the default MVP 2 stereotype group layout:
 
 ```bash
@@ -215,7 +219,7 @@ Open `out/demo.drawio` in draw.io / diagrams.net to inspect the result.
 
 ## Known Limits
 
-- Drag editing is focused on class positions, edge segment handles, and source/target terminal handles. Full draw.io-style shape editing remains out of scope.
+- Drag editing is focused on class positions, edge segment handles, and source/target terminal handles. Terminal drag can reorder anchors on one side, but full draw.io-style shape editing remains out of scope.
 - Multi-selection supports classes, groups, and edges, but inspector editing still applies to the primary selected item.
 - Undo/redo is model-level for layout edits. Drag gestures are coalesced into one history checkpoint instead of one checkpoint per mousemove.
 - Raw `<mxGraphModel>` XML and uncompressed `.drawio` imports are supported first; compressed draw.io files are deferred.

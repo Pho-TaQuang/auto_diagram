@@ -21,6 +21,8 @@ const classStyleParts = [
   "resizeLast=0",
   "collapsible=0",
   "marginBottom=0",
+  "whiteSpace=wrap",
+  "html=1",
   "fillColor=light-dark(#eeeeee,#1f2020)",
   "strokeColor=light-dark(#999999,#cccccc)",
   "fontColor=light-dark(#333333,#cccccc)"
@@ -79,7 +81,7 @@ export type DrawioExportOptions = {
 };
 
 export function toMxGraphModelXml(document: DiagramDocument, options: DrawioExportOptions = {}): string {
-  const nodeIdByDiagramId = new Map(document.nodes.map((node) => [node.id, toNodeCellId(node.id)]));
+  const nodeIdByDiagramId = createExportCellIdMap(document.nodes, "node");
   const bounds = calculateBounds(document.nodes, document.groups ?? []);
   const lines: string[] = [
     `<mxGraphModel dx="${formatNumber(bounds.width)}" dy="${formatNumber(bounds.height)}" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1169" pageHeight="1654" math="0" shadow="0">`,
@@ -89,14 +91,19 @@ export function toMxGraphModelXml(document: DiagramDocument, options: DrawioExpo
   ];
 
   if (options.groupFrames) {
-    for (const group of document.groups ?? []) {
-      lines.push(buildGroupFrameCell(group));
-    }
+    (document.groups ?? []).forEach((group, index) => {
+      lines.push(buildGroupFrameCell(group, createSequentialCellId("group_frame", index)));
+    });
   }
 
-  for (const node of document.nodes) {
-    lines.push(...buildClassCells(node));
-  }
+  document.nodes.forEach((node) => {
+    const nodeCellId = nodeIdByDiagramId.get(node.id);
+    if (!nodeCellId) {
+      throw new Error(`Cannot export node ${node.id}: missing generated cell id.`);
+    }
+
+    lines.push(...buildClassCells(node, nodeCellId));
+  });
 
   document.edges.forEach((edge, index) => {
     lines.push(buildEdgeCell(edge, index + 1, nodeIdByDiagramId));
@@ -106,9 +113,8 @@ export function toMxGraphModelXml(document: DiagramDocument, options: DrawioExpo
   return lines.join("\n");
 }
 
-function buildGroupFrameCell(group: DiagramGroup): string {
+function buildGroupFrameCell(group: DiagramGroup, groupCellId: string): string {
   const layout = requireGroupLayout(group);
-  const groupCellId = toGroupCellId(group.id);
 
   return [
     `    <mxCell id="${groupCellId}" parent="1" style="${escapeXmlAttribute(groupFrameStyle)}" value="${escapeXmlAttribute(group.label)}" vertex="1">`,
@@ -117,10 +123,12 @@ function buildGroupFrameCell(group: DiagramGroup): string {
   ].join("\n");
 }
 
-function buildClassCells(node: DiagramNode): string[] {
+function buildClassCells(node: DiagramNode, nodeCellId: string): string[] {
   const layout = requireLayout(node);
-  const nodeCellId = toNodeCellId(node.id);
-  const headerValue = node.stereotype ? `<<${node.stereotype}>>\n${node.label}` : node.label;
+  const labelHtml = escapeHtmlText(node.label);
+  const headerValue = node.stereotype
+    ? `<b>&lt;&lt;${escapeHtmlText(node.stereotype)}&gt;&gt;</b><br>${labelHtml}`
+    : labelHtml;
   const classStyle = buildClassStyle(layout);
   const lines = [
     `    <mxCell id="${nodeCellId}" parent="1" style="${escapeXmlAttribute(classStyle)}" value="${escapeXmlAttribute(headerValue)}" vertex="1">`,
@@ -322,16 +330,12 @@ function calculateBounds(nodes: DiagramNode[], groups: DiagramGroup[]): { width:
   return { width, height };
 }
 
-function toNodeCellId(id: string): string {
-  return `node_${sanitizeCellId(id)}`;
+function createExportCellIdMap(items: Array<{ id: string }>, type: string): Map<string, string> {
+  return new Map(items.map((item, index) => [item.id, createSequentialCellId(type, index)]));
 }
 
-function toGroupCellId(id: string): string {
-  return `group_frame_${sanitizeCellId(id)}`;
-}
-
-function sanitizeCellId(id: string): string {
-  return id.replace(/[^A-Za-z0-9_:-]/g, "_");
+function createSequentialCellId(type: string, zeroBasedIndex: number): string {
+  return `${type}_${zeroBasedIndex + 1}`;
 }
 
 function escapeXmlAttribute(value: string): string {
@@ -342,6 +346,13 @@ function escapeXmlAttribute(value: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;")
     .replace(/\r?\n/g, "&#xa;");
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function formatNumber(value: number): string {

@@ -511,7 +511,11 @@ function extractGroups(model: MxGraphModel, classes: MxLayoutClass[]): MxLayoutG
 }
 
 function parseClassHeader(value: string): { label: string; stereotype?: string } {
-  const lines = value.split(/\r?\n|&#xa;/).map((line) => line.trim()).filter(Boolean);
+  let text = value.replace(/<br\s*\/?>/gi, "\n");
+  text = text.replace(/<[^>]+>/g, "");
+  text = decodeXmlText(text);
+
+  const lines = text.split(/\r?\n|&#xa;/).map((line) => line.trim()).filter(Boolean);
   const stereotypeMatch = lines[0]?.match(/^<<(.+)>>$/);
 
   if (stereotypeMatch) {
@@ -522,7 +526,7 @@ function parseClassHeader(value: string): { label: string; stereotype?: string }
   }
 
   return {
-    label: lines[0] ?? value
+    label: lines[0] ?? text
   };
 }
 
