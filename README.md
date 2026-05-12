@@ -44,7 +44,7 @@ For example, `<<Service>>`, `<<service>>`, and `<<External Service>>` are three 
 
 ## MVP 2b/2c Routing and Group Frames
 
-MVP 2b adds deterministic, group-aware orthogonal routing for inter-group relationships. The layout engine writes simple waypoint arrays into `DiagramEdge.layout.waypoints`; same-group relationships remain direct for now. Routing uses the gap between source and target group bounds and nudges waypoints outside class rectangles.
+MVP 2b adds deterministic, group-aware orthogonal routing for inter-group relationships. The layout engine writes waypoint arrays into `DiagramEdge.layout.waypoints` when a bend is needed; direct anchored routes may have no waypoints. Routing uses the gap between source and target group bounds and nudges waypoints outside class rectangles.
 
 MVP 2c added stereotype group frames to draw.io. These frames are background visuals only:
 
@@ -67,6 +67,8 @@ npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.la
 
 The layout JSON lets users adjust grid size, group row/column placement, packing, and class assignment to groups. These edits affect layout only; they do not change parsed class names, stereotypes, attributes, methods, or relationships.
 
+Groups are centered inside their reserved grid cell or span. Groups in the same row share a visual center line, and groups in the same column share a visual center line, even when their measured sizes differ.
+
 `layout:init` and `generate` also accept `--suggested-layout` to opt into the built-in architecture-spine placement. This suggested placement is generated from the groups present in the input; it does not create missing groups. Explicit `--layout <layout.json>` remains the source of truth and cannot be combined with `--suggested-layout`.
 
 ## MVP 2e Orthogonal Anchored Routing
@@ -84,6 +86,8 @@ Programmatic layout callers can optionally pass `anchorOrders`, `anchorOrderMode
 The web UI summary panel shows the current generated layout score, crossing count, node-hit count, and bend count for Mermaid-generated diagrams.
 
 Draw.io export writes routed control points directly under `<Array as="points">` as plain `<mxPoint x="..." y="..." />` entries. It does not emit `sourcePoint` or `targetPoint`; endpoint selection stays in the edge style through `exitX/exitY` and `entryX/entryY`.
+
+Relationship endpoints stay in the same left-to-right order as the Mermaid input. Arrowheads, inheritance triangles, and aggregation/composition diamonds are selected during draw.io export from the parsed Mermaid operator, so an operator such as `A --* B` affects the visual marker side without reversing the layout source and target.
 
 Group frames are hidden by default. To include them as background visuals:
 
@@ -137,7 +141,7 @@ MVP 0 supports the subset used by `docs/demo_mermaid.md`:
 - attributes and methods with visibility prefixes
 - constructors
 - method return types after the method signature
-- relationship operators `..>`, `<|..`, and `<|--`
+- relationship operators `--`, `-->`, `<--`, `..`, `..>`, `<..`, `<|..`, `..|>`, `<|--`, `--|>`, `o--`, `--o`, `*--`, and `--*`
 - relationship labels after `:`
 
 Relationship endpoints without a matching `class Name` declaration or `class Name { ... }` block are generated as empty class boxes and reported as parser warnings. Add explicit class declarations when those boxes should contain attributes, methods, or stereotypes.

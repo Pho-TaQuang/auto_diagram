@@ -8,6 +8,7 @@ const dmLoaiLucLuongFixture = readFileSync("docs/dmLoaiLucLuong.md", "utf8");
 export function runParserTests(): void {
   parsesTheMvp0MermaidFixture();
   preservesClassMembersReturnTypesAndRelationshipLabels();
+  parsesAdditionalRelationshipOperatorsWithoutReversingEndpoints();
   preservesExactStereotypeText();
   warnsAboutImplicitRelationshipClasses();
   parsesTheDmLoaiLucLuongFixture();
@@ -45,6 +46,41 @@ function preservesClassMembersReturnTypesAndRelationshipLabels(): void {
   assert.ok(document.edges.some((edge) => edge.operator === "<|--" && edge.label === "extends"));
 }
 
+function parsesAdditionalRelationshipOperatorsWithoutReversingEndpoints(): void {
+  const document = parseMermaidClassDiagram([
+    "classDiagram",
+    "A -- B : association",
+    "A --> B : directed",
+    "B <-- A : directed-left",
+    "Whole o-- Part : aggregation",
+    "Part --o Whole : aggregation-right",
+    "Whole *-- Part : composition",
+    "Part --* Whole : composition-right",
+    "Parent <|-- Child : inheritance-left",
+    "Child --|> Parent : inheritance-right",
+    "Interface <|.. Implementation : realization-left",
+    "Implementation ..|> Interface : realization-right",
+    "Client ..> Supplier : dependency-right",
+    "Supplier <.. Client : dependency-left",
+    "A .. B : dashed"
+  ].join("\n"));
+
+  assertRelationship(document.edges, "A", "B", "--", "association");
+  assertRelationship(document.edges, "A", "B", "-->", "directedAssociation");
+  assertRelationship(document.edges, "B", "A", "<--", "directedAssociation");
+  assertRelationship(document.edges, "Whole", "Part", "o--", "aggregation");
+  assertRelationship(document.edges, "Part", "Whole", "--o", "aggregation");
+  assertRelationship(document.edges, "Whole", "Part", "*--", "composition");
+  assertRelationship(document.edges, "Part", "Whole", "--*", "composition");
+  assertRelationship(document.edges, "Parent", "Child", "<|--", "inheritance");
+  assertRelationship(document.edges, "Child", "Parent", "--|>", "inheritance");
+  assertRelationship(document.edges, "Interface", "Implementation", "<|..", "realization");
+  assertRelationship(document.edges, "Implementation", "Interface", "..|>", "realization");
+  assertRelationship(document.edges, "Client", "Supplier", "..>", "dependency");
+  assertRelationship(document.edges, "Supplier", "Client", "<..", "dependency");
+  assertRelationship(document.edges, "A", "B", "..", "dashedAssociation");
+}
+
 function preservesExactStereotypeText(): void {
   const document = parseMermaidClassDiagram([
     "classDiagram",
@@ -60,6 +96,21 @@ function preservesExactStereotypeText(): void {
   assert.equal(document.nodes.find((node) => node.id === "UpperService")?.stereotype, "Service");
   assert.equal(document.nodes.find((node) => node.id === "LowerService")?.stereotype, "service");
   assert.equal(document.nodes.find((node) => node.id === "ApiGateway")?.stereotype, "Api~Gateway~");
+}
+
+function assertRelationship(
+  edges: ReturnType<typeof parseMermaidClassDiagram>["edges"],
+  sourceId: string,
+  targetId: string,
+  operator: string,
+  kind: string
+): void {
+  assert.ok(edges.some((edge) =>
+    edge.sourceId === sourceId &&
+    edge.targetId === targetId &&
+    edge.operator === operator &&
+    edge.kind === kind
+  ), `Expected ${sourceId} ${operator} ${targetId} to be ${kind}.`);
 }
 
 function warnsAboutImplicitRelationshipClasses(): void {

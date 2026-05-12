@@ -48,7 +48,9 @@ export type MxLayoutClass = {
   children: MxGraphCell[];
 };
 
-export type MxLayoutEdgeKind = "dependency" | "realization" | "inheritance" | "association";
+export type MxLayoutEdgeKind = "dependency" | "realization" | "inheritance" | "association" | "directedAssociation" | "aggregation" | "composition" | "dashedAssociation";
+
+export type MxLayoutEdgeMarker = "none" | "open" | "block" | "diamondOpen" | "diamondFilled";
 
 export type MxLayoutEdge = {
   id: string;
@@ -56,6 +58,9 @@ export type MxLayoutEdge = {
   targetId?: string;
   label: string;
   kind: MxLayoutEdgeKind;
+  markerStart: MxLayoutEdgeMarker;
+  markerEnd: MxLayoutEdgeMarker;
+  dashed: boolean;
   sourceAnchor?: MxAnchor;
   targetAnchor?: MxAnchor;
   waypoints: MxPoint[];
@@ -214,6 +219,9 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
       targetId,
       label: cell.attributes.value ?? "",
       kind: classifyEdge(style),
+      markerStart: markerFromStyle(style, "start"),
+      markerEnd: markerFromStyle(style, "end"),
+      dashed: style.get("dashed") === "1",
       sourceAnchor: anchorFromStyle(style, "exit"),
       targetAnchor: anchorFromStyle(style, "entry"),
       waypoints: cell.geometry?.waypoints ?? []
@@ -544,15 +552,54 @@ function serializeStyle(style: Map<string, string>): string {
 }
 
 function classifyEdge(style: Map<string, string>): MxLayoutEdgeKind {
-  if (style.get("startArrow") === "block" && style.get("endArrow") === "none") {
-    return style.get("dashed") === "1" ? "realization" : "inheritance";
+  const startMarker = markerFromStyle(style, "start");
+  const endMarker = markerFromStyle(style, "end");
+  const dashed = style.get("dashed") === "1";
+
+  if (startMarker === "block" || endMarker === "block") {
+    return dashed ? "realization" : "inheritance";
   }
 
-  if (style.get("endArrow") === "open") {
-    return "dependency";
+  if (startMarker === "diamondFilled" || endMarker === "diamondFilled") {
+    return "composition";
+  }
+
+  if (startMarker === "diamondOpen" || endMarker === "diamondOpen") {
+    return "aggregation";
+  }
+
+  if (startMarker === "open" || endMarker === "open") {
+    return dashed ? "dependency" : "directedAssociation";
+  }
+
+  if (dashed) {
+    return "dashedAssociation";
   }
 
   return "association";
+}
+
+function markerFromStyle(style: Map<string, string>, endpoint: "start" | "end"): MxLayoutEdgeMarker {
+  const arrow = style.get(`${endpoint}Arrow`);
+  const fill = style.get(`${endpoint}Fill`);
+
+  if (!arrow || arrow === "none") {
+    return "none";
+  }
+
+  if (arrow === "open") {
+    return "open";
+  }
+
+  if (arrow === "block") {
+    return "block";
+  }
+
+  if (arrow === "diamondThin" || arrow === "diamond") {
+    return fill === "1" ? "diamondFilled" : "diamondOpen";
+  }
+
+  return "none";
 }
 
 function anchorFromStyle(style: Map<string, string>, prefix: "exit" | "entry"): MxAnchor | undefined {
@@ -578,19 +625,19 @@ function writeAnchorToStyle(styleText: string, prefix: "exit" | "entry", anchor:
 }
 
 function anchorFromRelativePoint(x: number, y: number): MxAnchor {
-  if (y === 0) {
-    return { side: "top", ratio: x };
+  if (y <= 0) {
+    return { side: "top", ratio: clamp(x, 0, 1) };
   }
 
-  if (x === 1) {
-    return { side: "right", ratio: y };
+  if (x >= 1) {
+    return { side: "right", ratio: clamp(y, 0, 1) };
   }
 
-  if (y === 1) {
-    return { side: "bottom", ratio: x };
+  if (y >= 1) {
+    return { side: "bottom", ratio: clamp(x, 0, 1) };
   }
 
-  return { side: "left", ratio: y };
+  return { side: "left", ratio: clamp(y, 0, 1) };
 }
 
 function anchorToRelativePoint(anchor: MxAnchor): MxPoint {
@@ -831,6 +878,10 @@ function asArray<T>(value: T | T[] | undefined): T[] {
 function readNumber(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function decodeXmlText(value: string): string {

@@ -16,6 +16,7 @@ export function runDrawioExporterTests(): void {
   exportsVisibleGroupFramesWhenEnabled();
   exportsEdgeWaypoints();
   exportsOrthogonalAnchoredEdges();
+  exportsOperatorSpecificArrowEnds();
   exportsExplicitSwimlaneHeaderSizes();
   exportsThreeClassCompartments();
   exportsTheDmLoaiLucLuongFixture();
@@ -101,6 +102,38 @@ function exportsOrthogonalAnchoredEdges(): void {
   assert.ok(edgeCells.every((cell) => /(?:^|;)exitPerimeter=0(?:;|$)/.test(String(cell.style))));
   assert.ok(edgeCells.every((cell) => /(?:^|;)entryPerimeter=0(?:;|$)/.test(String(cell.style))));
   assert.ok(edgeCells.every((cell) => !waypointsForCell(cell).some((point) => point.as === "sourcePoint" || point.as === "targetPoint")));
+}
+
+function exportsOperatorSpecificArrowEnds(): void {
+  const xml = renderFixture([
+    "classDiagram",
+    "Parent <|-- Child : inheritance-left",
+    "Child --|> Parent : inheritance-right",
+    "Interface <|.. Implementation : realization-left",
+    "Implementation ..|> Interface : realization-right",
+    "Whole *-- Part : composition-left",
+    "Part --* Whole : composition-right",
+    "Whole o-- Part : aggregation-left",
+    "Part --o Whole : aggregation-right",
+    "Supplier <.. Client : dependency-left",
+    "Client ..> Supplier : dependency-right",
+    "B <-- A : directed-left",
+    "A --> B : directed-right"
+  ].join("\n"));
+  const edgeCells = asArray(parseXml(xml).mxGraphModel.root.mxCell).filter((cell) => cell.edge === "1");
+
+  assertStyleForLabel(edgeCells, "inheritance-left", ["startArrow=block", "endArrow=none"]);
+  assertStyleForLabel(edgeCells, "inheritance-right", ["startArrow=none", "endArrow=block"]);
+  assertStyleForLabel(edgeCells, "realization-left", ["dashed=1", "startArrow=block", "endArrow=none"]);
+  assertStyleForLabel(edgeCells, "realization-right", ["dashed=1", "startArrow=none", "endArrow=block"]);
+  assertStyleForLabel(edgeCells, "composition-left", ["startArrow=diamondThin", "startFill=1", "endArrow=none"]);
+  assertStyleForLabel(edgeCells, "composition-right", ["startArrow=none", "endArrow=diamondThin", "endFill=1"]);
+  assertStyleForLabel(edgeCells, "aggregation-left", ["startArrow=diamondThin", "startFill=0", "endArrow=none"]);
+  assertStyleForLabel(edgeCells, "aggregation-right", ["startArrow=none", "endArrow=diamondThin", "endFill=0"]);
+  assertStyleForLabel(edgeCells, "dependency-left", ["dashed=1", "startArrow=open", "endArrow=none"]);
+  assertStyleForLabel(edgeCells, "dependency-right", ["dashed=1", "startArrow=none", "endArrow=open"]);
+  assertStyleForLabel(edgeCells, "directed-left", ["startArrow=open", "endArrow=none"]);
+  assertStyleForLabel(edgeCells, "directed-right", ["startArrow=none", "endArrow=open"]);
 }
 
 function exportsExplicitSwimlaneHeaderSizes(): void {
@@ -215,4 +248,14 @@ function parseXml(xml: string): any {
 
 function asArray<T>(value: T | T[]): T[] {
   return Array.isArray(value) ? value : [value];
+}
+
+function assertStyleForLabel(edgeCells: any[], label: string, expectedParts: string[]): void {
+  const edge = edgeCells.find((cell) => cell.value === label);
+  assert.ok(edge, `Expected edge with label ${label}.`);
+  const style = String(edge.style);
+
+  for (const expectedPart of expectedParts) {
+    assert.ok(style.includes(expectedPart), `Expected ${label} style to include ${expectedPart}: ${style}`);
+  }
 }

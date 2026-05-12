@@ -1009,8 +1009,10 @@ function placeGroupsOnGrid(packedGroups: PackedGroup[], grid: GridSize): void {
   for (const packedGroup of packedGroups) {
     const intent = requireLayoutIntent(packedGroup.group);
     const groupLayout = requireGroupLayout(packedGroup.group);
-    const x = columnOffsets[intent.gridX];
-    const y = rowOffsets[intent.gridY];
+    const spanWidth = calculateGridSpanSize(columnWidths, intent.gridX, intent.gridWidth, groupGapX);
+    const spanHeight = calculateGridSpanSize(rowHeights, intent.gridY, intent.gridHeight, groupGapY);
+    const x = centerWithin(columnOffsets[intent.gridX], spanWidth, groupLayout.width);
+    const y = centerWithin(rowOffsets[intent.gridY], spanHeight, groupLayout.height);
 
     packedGroup.group.layout = {
       ...groupLayout,
@@ -1028,6 +1030,19 @@ function placeGroupsOnGrid(packedGroups: PackedGroup[], grid: GridSize): void {
       };
     }
   }
+}
+
+function calculateGridSpanSize(sizes: number[], start: number, span: number, gap: number): number {
+  const normalizedSpan = Math.max(1, span);
+  const size = sizes
+    .slice(start, start + normalizedSpan)
+    .reduce((sum, value) => sum + value, 0);
+
+  return size + (normalizedSpan - 1) * gap;
+}
+
+function centerWithin(start: number, availableSize: number, itemSize: number): number {
+  return start + (availableSize - itemSize) / 2;
 }
 
 // Changed: routeEdges now evaluates multiple anchor-order variants for the same node placement.

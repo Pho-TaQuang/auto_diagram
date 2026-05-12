@@ -23,6 +23,7 @@ export function runMxGraphModelTests(): void {
   updatesEdgeAnchorsAndWaypoints();
   updatesEdgeTerminals();
   separatesExtendsRelationships();
+  parsesEdgeMarkersFromStyle();
   importsUncompressedDrawioWrapper();
 }
 
@@ -121,6 +122,26 @@ function separatesExtendsRelationships(): void {
   assert.ok(view.extendsEdges.every((edge) => edge.kind === "inheritance" || edge.kind === "realization"));
 }
 
+function parsesEdgeMarkersFromStyle(): void {
+  const xml = toMxGraphModelXml(applyStereotypeGridLayout(parseMermaidClassDiagram([
+    "classDiagram",
+    "Whole *-- Part : composition-left",
+    "Part --* Whole : composition-right",
+    "Parent <|-- Child : inheritance-left",
+    "Child --|> Parent : inheritance-right",
+    "Supplier <.. Client : dependency-left",
+    "Client ..> Supplier : dependency-right"
+  ].join("\n"))));
+  const view = extractLayoutViewModel(parseMxGraphModelXml(xml));
+
+  assertEdgeMarkers(view.edges, "composition-left", "diamondFilled", "none", "composition");
+  assertEdgeMarkers(view.edges, "composition-right", "none", "diamondFilled", "composition");
+  assertEdgeMarkers(view.edges, "inheritance-left", "block", "none", "inheritance");
+  assertEdgeMarkers(view.edges, "inheritance-right", "none", "block", "inheritance");
+  assertEdgeMarkers(view.edges, "dependency-left", "open", "none", "dependency");
+  assertEdgeMarkers(view.edges, "dependency-right", "none", "open", "dependency");
+}
+
 function importsUncompressedDrawioWrapper(): void {
   const xml = renderFixture();
   const wrapped = `<mxfile><diagram id="demo">${escapeXmlText(xml)}</diagram></mxfile>`;
@@ -166,4 +187,18 @@ function escapeXmlText(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function assertEdgeMarkers(
+  edges: ReturnType<typeof extractLayoutViewModel>["edges"],
+  label: string,
+  markerStart: string,
+  markerEnd: string,
+  kind: string
+): void {
+  const edge = edges.find((candidate) => candidate.label === label);
+  assert.ok(edge, `Expected edge ${label}.`);
+  assert.equal(edge.markerStart, markerStart);
+  assert.equal(edge.markerEnd, markerEnd);
+  assert.equal(edge.kind, kind);
 }

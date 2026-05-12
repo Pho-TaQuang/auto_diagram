@@ -4,9 +4,31 @@ export type DiagnosticSeverity = "warning" | "error";
 
 export type ClassMemberKind = "attribute" | "method";
 
-export type RelationshipKind = "dependency" | "realization" | "inheritance";
+export type RelationshipKind =
+  | "dependency"
+  | "realization"
+  | "inheritance"
+  | "association"
+  | "directedAssociation"
+  | "aggregation"
+  | "composition"
+  | "dashedAssociation";
 
-export type RelationshipOperator = "..>" | "<|.." | "<|--";
+export type RelationshipOperator =
+  | "..>"
+  | "<.."
+  | "<|.."
+  | "..|>"
+  | "<|--"
+  | "--|>"
+  | "--"
+  | "-->"
+  | "<--"
+  | "o--"
+  | "--o"
+  | "*--"
+  | "--*"
+  | "..";
 
 export type Visibility = "+" | "-" | "#" | "~";
 
@@ -144,13 +166,27 @@ export function createClassNode(id: string): DiagramNode {
 }
 
 export function relationshipKindFromOperator(operator: RelationshipOperator): RelationshipKind {
-  if (operator === "..>") {
-    return "dependency";
+  switch (operator) {
+    case "..>":
+    case "<..":
+      return "dependency";
+    case "<|..":
+    case "..|>":
+      return "realization";
+    case "<|--":
+    case "--|>":
+      return "inheritance";
+    case "--": return "association";
+    case "-->":
+    case "<--":
+      return "directedAssociation";
+    case "o--":
+    case "--o":
+      return "aggregation";
+    case "*--":
+    case "--*":
+      return "composition";
+    case "..":
+      return "dashedAssociation";
   }
-
-  if (operator === "<|..") {
-    return "realization";
-  }
-
-  return "inheritance";
 }

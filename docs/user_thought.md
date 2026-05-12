@@ -1173,7 +1173,23 @@ Decision:
 - The first supported matrix sizes are 10x10 and 15x15.
 - Group tokens can be drag-dropped on the grid board; the UI rounds pointer position to gridX/gridY, previews the computed x/y/span, and writes only gridX/gridY/gridWidth/gridHeight in StereotypeLayoutIntent.
 - Group footprint estimation uses the class width/height set and the group's packing mode to estimate vertical or compact-grid packed bounds, then maps that measured area to a compact matrix footprint so normal groups do not reserve excessive cells.
+- Generated placement centers each group inside its reserved grid cell/span so same-row and same-column groups align by center lines instead of the top-left corner.
 - Rotation is a per-group packing operation: it toggles vertical versus horizontal arrangement and recalculates the group footprint from the unchanged class dimensions. It must not swap width and height as if class boxes themselves could rotate, and explicit user intent must not be overridden by scored packing variants.
 - The preview canvas should not show a visual grid background; the group-grid matrix is the dedicated layout-intent control.
 - The preview should render all class attribute and method rows in separate compartments; it should not hide member rows behind a fixed row limit.
+```
+
+---
+
+## 33. Relationship Operator Direction Decision
+
+Decision:
+
+```text
+- Mermaid relationship source and target endpoints are preserved exactly as parsed from the input line.
+- The parser records both the broad relationship kind and the concrete Mermaid operator.
+- Layout uses sourceId, targetId, and routed anchors from the preserved Mermaid endpoints.
+- Draw.io export decides whether the visual marker belongs on the start or end of the edge from the concrete operator.
+- Web preview reads start/end marker metadata from mxGraph style instead of assuming one marker side from relationship kind alone.
+- This prevents operators such as --*, --o, --|>, ..|>, <--, and <.. from reversing layout semantics just to render the correct draw.io arrowhead.
 ```

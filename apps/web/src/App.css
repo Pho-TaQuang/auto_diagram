@@ -636,7 +636,8 @@ button:disabled {
 }
 
 .preview-edge.dependency .edge-visible,
-.preview-edge.realization .edge-visible {
+.preview-edge.realization .edge-visible,
+.preview-edge.dashedAssociation .edge-visible {
   stroke-dasharray: 6 4;
 }
 

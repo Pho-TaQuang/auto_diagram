@@ -216,7 +216,7 @@ PageModel <|-- DmPhuongTienPageModel : extends
 DmPhuongTienManager ..> DataAccessAdapterFactory : creates adapter
 DmPhuongTienManager ..> SysdmLoaiLucLuongEntity : query/map options
 DmPhuongTienManager ..> SysdmPhuongTienEntity : CRUD/status/map
-DmPhuongTienManager ..> DmPhuongTienModel : use
+DmPhuongTienManager --* DmPhuongTienModel : use
 DmPhuongTienManager ..> DmPhuongTienPageModel : use
 DmPhuongTienManager ..> SysQlpaModel_LoaiLucLuongOptionModel : use
 DataAccessAdapterFactory ..> DataAccessAdapter : creates

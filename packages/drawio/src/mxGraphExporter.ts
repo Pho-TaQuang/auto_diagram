@@ -82,6 +82,7 @@ export type DrawioExportOptions = {
 
 export function toMxGraphModelXml(document: DiagramDocument, options: DrawioExportOptions = {}): string {
   const nodeIdByDiagramId = createExportCellIdMap(document.nodes, "node");
+  const nodeByDiagramId = new Map(document.nodes.map((node) => [node.id, node]));
   const bounds = calculateBounds(document.nodes, document.groups ?? []);
   const lines: string[] = [
     `<mxGraphModel dx="${formatNumber(bounds.width)}" dy="${formatNumber(bounds.height)}" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1169" pageHeight="1654" math="0" shadow="0">`,
@@ -106,7 +107,7 @@ export function toMxGraphModelXml(document: DiagramDocument, options: DrawioExpo
   });
 
   document.edges.forEach((edge, index) => {
-    lines.push(buildEdgeCell(edge, index + 1, nodeIdByDiagramId));
+    lines.push(buildEdgeCell(edge, index + 1, nodeIdByDiagramId, nodeByDiagramId));
   });
 
   lines.push("  </root>", "</mxGraphModel>", "");
@@ -204,24 +205,27 @@ function buildSeparatorCell(
 function buildEdgeCell(
   edge: DiagramEdge,
   index: number,
-  nodeIdByDiagramId: Map<string, string>
+  nodeIdByDiagramId: Map<string, string>,
+  nodeByDiagramId: Map<string, DiagramNode>
 ): string {
   const source = nodeIdByDiagramId.get(edge.sourceId);
   const target = nodeIdByDiagramId.get(edge.targetId);
+  const sourceNode = nodeByDiagramId.get(edge.sourceId);
+  const targetNode = nodeByDiagramId.get(edge.targetId);
 
-  if (!source || !target) {
+  if (!source || !target || !sourceNode || !targetNode) {
     throw new Error(`Cannot export edge ${edge.id}: missing source or target node.`);
   }
 
   return [
     `    <mxCell id="edge_${index}" edge="1" parent="1" source="${source}" style="${escapeXmlAttribute(edgeStyle(edge))}" target="${target}" value="${escapeXmlAttribute(edge.label ?? "")}">`,
-    buildEdgeGeometry(edge),
+    buildEdgeGeometry(edge, sourceNode, targetNode),
     "    </mxCell>"
   ].join("\n");
 }
 
-function buildEdgeGeometry(edge: DiagramEdge): string {
-  const waypoints = edge.layout?.waypoints ?? [];
+function buildEdgeGeometry(edge: DiagramEdge, sourceNode: DiagramNode, targetNode: DiagramNode): string {
+  const waypoints = exportWaypoints(edge, sourceNode, targetNode);
 
   if (waypoints.length === 0) {
     return [
@@ -244,13 +248,57 @@ function buildWaypointCell(point: DiagramPoint): string {
   return `          <mxPoint x="${formatNumber(point.x)}" y="${formatNumber(point.y)}" />`;
 }
 
+function exportWaypoints(edge: DiagramEdge, sourceNode: DiagramNode, targetNode: DiagramNode): DiagramPoint[] {
+  const waypoints = edge.layout?.waypoints ?? [];
+  const sourcePoint = edge.layout?.sourceAnchor
+    ? edgeAnchorPoint(requireLayout(sourceNode), edge.layout.sourceAnchor)
+    : undefined;
+  const targetPoint = edge.layout?.targetAnchor
+    ? edgeAnchorPoint(requireLayout(targetNode), edge.layout.targetAnchor)
+    : undefined;
+  const cleaned: DiagramPoint[] = [];
+
+  for (const waypoint of waypoints) {
+    if (sourcePoint && pointsEqual(waypoint, sourcePoint)) {
+      continue;
+    }
+
+    if (targetPoint && pointsEqual(waypoint, targetPoint)) {
+      continue;
+    }
+
+    if (cleaned.length > 0 && pointsEqual(cleaned[cleaned.length - 1], waypoint)) {
+      continue;
+    }
+
+    cleaned.push(waypoint);
+  }
+
+  return cleaned;
+}
+
+function edgeAnchorPoint(layout: DiagramNodeLayout, anchor: DiagramEdgeAnchor): DiagramPoint {
+  if (anchor.side === "north") {
+    return { x: layout.x + layout.width * anchor.ratio, y: layout.y };
+  }
+
+  if (anchor.side === "south") {
+    return { x: layout.x + layout.width * anchor.ratio, y: layout.y + layout.height };
+  }
+
+  if (anchor.side === "west") {
+    return { x: layout.x, y: layout.y + layout.height * anchor.ratio };
+  }
+
+  return { x: layout.x + layout.width, y: layout.y + layout.height * anchor.ratio };
+}
+
+function pointsEqual(left: DiagramPoint, right: DiagramPoint): boolean {
+  return Math.abs(left.x - right.x) < 0.001 && Math.abs(left.y - right.y) < 0.001;
+}
+
 function edgeStyle(edge: DiagramEdge): string {
-  const semanticStyle =
-    edge.kind === "dependency"
-      ? ["dashed=1", "startArrow=none", "endArrow=open", "endSize=12"]
-      : edge.kind === "realization"
-        ? ["dashed=1", "startArrow=block", "startSize=16", "startFill=0", "endArrow=none"]
-        : ["startArrow=block", "startSize=16", "startFill=0", "endArrow=none"];
+  const semanticStyle = edgeSemanticStyle(edge);
   const anchorStyle = [
     ...anchorStyleParts("exit", edge.layout?.sourceAnchor),
     ...anchorStyleParts("entry", edge.layout?.targetAnchor)
@@ -266,6 +314,39 @@ function edgeStyle(edge: DiagramEdge): string {
     "jettySize=auto",
     "html=1"
   ].join(";");
+}
+
+function edgeSemanticStyle(edge: DiagramEdge): string[] {
+  switch (edge.operator) {
+    case "--":
+      return ["startArrow=none", "endArrow=none"];
+    case "..":
+      return ["dashed=1", "startArrow=none", "endArrow=none"];
+    case "-->":
+      return ["startArrow=none", "endArrow=open", "endFill=0", "endSize=12"];
+    case "<--":
+      return ["startArrow=open", "startFill=0", "startSize=12", "endArrow=none"];
+    case "..>":
+      return ["dashed=1", "startArrow=none", "endArrow=open", "endFill=0", "endSize=12"];
+    case "<..":
+      return ["dashed=1", "startArrow=open", "startFill=0", "startSize=12", "endArrow=none"];
+    case "<|--":
+      return ["startArrow=block", "startSize=16", "startFill=0", "endArrow=none"];
+    case "--|>":
+      return ["startArrow=none", "endArrow=block", "endSize=16", "endFill=0"];
+    case "<|..":
+      return ["dashed=1", "startArrow=block", "startSize=16", "startFill=0", "endArrow=none"];
+    case "..|>":
+      return ["dashed=1", "startArrow=none", "endArrow=block", "endSize=16", "endFill=0"];
+    case "o--":
+      return ["startArrow=diamondThin", "startFill=0", "startSize=14", "endArrow=none"];
+    case "--o":
+      return ["startArrow=none", "endArrow=diamondThin", "endFill=0", "endSize=14"];
+    case "*--":
+      return ["startArrow=diamondThin", "startFill=1", "startSize=14", "endArrow=none"];
+    case "--*":
+      return ["startArrow=none", "endArrow=diamondThin", "endFill=1", "endSize=14"];
+  }
 }
 
 function anchorStyleParts(prefix: "exit" | "entry", anchor: DiagramEdgeAnchor | undefined): string[] {

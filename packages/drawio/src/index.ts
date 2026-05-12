@@ -24,6 +24,7 @@ export type {
   MxLayoutClass,
   MxLayoutEdge,
   MxLayoutEdgeKind,
+  MxLayoutEdgeMarker,
   MxLayoutGroup,
   MxLayoutViewModel,
   MxPoint

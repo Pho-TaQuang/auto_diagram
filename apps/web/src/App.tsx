@@ -1027,7 +1027,7 @@ function DiagramPreview(props: {
 
     event.preventDefault();
 
-    if (event.altKey && stageRef.current) {
+    if (event.ctrlKey && stageRef.current) {
       event.currentTarget.setPointerCapture(event.pointerId);
       setDrag({
         kind: "pan",
@@ -1150,7 +1150,7 @@ function DiagramPreview(props: {
   };
 
   const beginClassDrag = (event: PointerEvent<SVGGElement>, classCell: MxLayoutClass): void => {
-    if (event.altKey || event.button !== 0) {
+    if (event.ctrlKey || event.button !== 0) {
       return;
     }
 
@@ -1194,7 +1194,7 @@ function DiagramPreview(props: {
   };
 
   const beginSegmentDrag = (event: PointerEvent<SVGCircleElement>, edge: MxLayoutEdge, segmentIndex: number): void => {
-    if (event.altKey || event.button !== 0) {
+    if (event.ctrlKey || event.button !== 0) {
       return;
     }
 
@@ -1215,7 +1215,7 @@ function DiagramPreview(props: {
   };
 
   const beginTerminalDrag = (event: PointerEvent<SVGCircleElement>, edgeId: string, terminal: "source" | "target"): void => {
-    if (event.altKey || event.button !== 0) {
+    if (event.ctrlKey || event.button !== 0) {
       return;
     }
 
@@ -1264,12 +1264,18 @@ function DiagramPreview(props: {
             <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="currentColor" strokeWidth="1.5" />
           </marker>
           <marker id="arrow-block" markerWidth="12" markerHeight="12" refX="1" refY="6" orient="auto">
-            <path d="M 11 1 L 1 6 L 11 11" fill="#ffffff" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M 11 1 L 1 6 L 11 11 Z" fill="var(--bg-canvas)" stroke="currentColor" strokeWidth="1.5" />
+          </marker>
+          <marker id="diamond-open" markerWidth="18" markerHeight="14" refX="9" refY="7" orient="auto" viewBox="0 0 18 14">
+            <path d="M 1 7 L 9 2 L 17 7 L 9 12 Z" fill="var(--bg-canvas)" stroke="currentColor" strokeWidth="1.5" />
+          </marker>
+          <marker id="diamond-filled" markerWidth="18" markerHeight="14" refX="9" refY="7" orient="auto" viewBox="0 0 18 14">
+            <path d="M 1 7 L 9 2 L 17 7 L 9 12 Z" fill="currentColor" stroke="currentColor" strokeWidth="1.5" />
           </marker>
         </defs>
         {props.showGroupFrames ? props.layoutView.groups.map((group) => (
           <g key={group.id} className={`preview-group ${isSelectionItemSelected(props.selection, { type: "group", id: group.id }) ? "selected" : ""}`} onPointerDown={(event) => {
-            if (event.altKey) {
+            if (event.ctrlKey) {
               return;
             }
             event.preventDefault();
@@ -1289,7 +1295,7 @@ function DiagramPreview(props: {
             hitStrokeWidth={edgeHitStrokeWidth}
             terminalPreview={drag?.kind === "terminal" && drag.edgeId === edge.id ? drag : undefined}
             onEdgePointerDown={(event) => {
-              if (event.altKey) {
+              if (event.ctrlKey) {
                 return;
               }
               event.preventDefault();
@@ -1498,10 +1504,12 @@ function PreviewEdge(props: {
     return null;
   }
 
+  const markerEnd = edgeMarkerUrl(props.edge.markerEnd);
+  const markerStart = edgeMarkerUrl(props.edge.markerStart);
   const points = [
-    anchorPoint(source, props.edge.sourceAnchor),
+    edgeEndpointPoint(source, props.edge.sourceAnchor, props.edge.markerStart),
     ...props.edge.waypoints,
-    anchorPoint(target, props.edge.targetAnchor)
+    edgeEndpointPoint(target, props.edge.targetAnchor, props.edge.markerEnd)
   ];
   const path = points.map((point) => `${point.x},${point.y}`).join(" ");
   const middle = points[Math.floor(points.length / 2)];
@@ -1511,21 +1519,30 @@ function PreviewEdge(props: {
   return (
     <g className={`preview-edge ${props.edge.kind} ${props.selected ? "selected" : ""}`}>
       <polyline className="edge-hitbox" points={path} strokeWidth={props.hitStrokeWidth} onPointerDown={props.onEdgePointerDown} />
-      <polyline className="edge-visible" points={path} markerEnd={props.edge.kind === "dependency" ? "url(#arrow-open)" : undefined} markerStart={props.edge.kind === "inheritance" || props.edge.kind === "realization" ? "url(#arrow-block)" : undefined} />
+      <polyline className="edge-visible" points={path} markerEnd={markerEnd} markerStart={markerStart} />
       {props.edge.label ? <text x={middle.x + 6} y={middle.y - 6}>{props.edge.label}</text> : null}
       {props.selected ? (
         <>
           <circle className="terminal-handle source" cx={points[0].x} cy={points[0].y} r="7" onPointerDown={(event) => props.onTerminalPointerDown(event, props.edge.id, "source")} />
           <circle className="terminal-handle target" cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="7" onPointerDown={(event) => props.onTerminalPointerDown(event, props.edge.id, "target")} />
           {segmentHandles.map((handle) => (
-            <circle
-              key={`${props.edge.id}-segment-${handle.segmentIndex}`}
-              className={`segment-handle ${handle.orientation}`}
-              cx={handle.x}
-              cy={handle.y}
-              r="6"
-              onPointerDown={(event) => props.onSegmentPointerDown(event, props.edge, handle.segmentIndex)}
-            />
+            <g key={`${props.edge.id}-segment-${handle.segmentIndex}`}>
+              <circle
+                cx={handle.x}
+                cy={handle.y}
+                r="18"
+                fill="transparent"
+                cursor="grab"
+                onPointerDown={(event) => props.onSegmentPointerDown(event, props.edge, handle.segmentIndex)}
+              />
+              <circle
+                className={`segment-handle ${handle.orientation}`}
+                cx={handle.x}
+                cy={handle.y}
+                r="6"
+                pointerEvents="none"
+              />
+            </g>
           ))}
           {terminalPreviewPoint ? (
             <>
@@ -1537,6 +1554,49 @@ function PreviewEdge(props: {
       ) : null}
     </g>
   );
+}
+
+function edgeEndpointPoint(classCell: MxLayoutClass, anchor: MxAnchor | undefined, marker: MxLayoutEdge["markerStart"]): MxPoint {
+  const point = anchorPoint(classCell, anchor);
+
+  if (!anchor || (marker !== "diamondOpen" && marker !== "diamondFilled")) {
+    return point;
+  }
+
+  const offset = 12;
+  if (anchor.side === "top") {
+    return { x: point.x, y: point.y - offset };
+  }
+
+  if (anchor.side === "bottom") {
+    return { x: point.x, y: point.y + offset };
+  }
+
+  if (anchor.side === "left") {
+    return { x: point.x - offset, y: point.y };
+  }
+
+  return { x: point.x + offset, y: point.y };
+}
+
+function edgeMarkerUrl(marker: MxLayoutEdge["markerStart"]): string | undefined {
+  if (marker === "open") {
+    return "url(#arrow-open)";
+  }
+
+  if (marker === "block") {
+    return "url(#arrow-block)";
+  }
+
+  if (marker === "diamondOpen") {
+    return "url(#diamond-open)";
+  }
+
+  if (marker === "diamondFilled") {
+    return "url(#diamond-filled)";
+  }
+
+  return undefined;
 }
 
 function SummaryPanel(props: { layoutView: MxLayoutViewModel; parsed?: WebPipelineResult["parsed"]; score?: DiagramLayoutScore }): React.JSX.Element {

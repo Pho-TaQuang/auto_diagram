@@ -13,7 +13,7 @@ import {
 const classBlockStartPattern = /^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{\s*$/;
 const classDeclarationPattern = /^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/;
 const inlineStereotypePattern = /^<<([^>]+)>>\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/;
-const relationshipPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s+(<\|\.\.|<\|--|\.\.>)\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(.+))?$/;
+const relationshipPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s+(<\|\.\.|<\|--|\.\.\|>|--\|>|-->|o--|\*--|<--|<\.\.|--o|--\*|\.\.>|--|\.\.)\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(.+))?$/;
 
 export function parseMermaidClassDiagram(source: string): DiagramDocument {
   const nodes = new Map<string, DiagramNode>();
