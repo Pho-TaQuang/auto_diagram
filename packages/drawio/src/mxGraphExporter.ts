@@ -5,7 +5,8 @@ import type {
   DiagramGroup,
   DiagramNode,
   DiagramNodeLayout,
-  DiagramPoint
+  DiagramPoint,
+  DiagramRoutingDivider
 } from "../../core/src/index.js";
 
 const classStyleParts = [
@@ -76,14 +77,51 @@ const groupFrameStyle = [
   "pointerEvents=0"
 ].join(";");
 
+const routingDividerStyle = [
+  "rounded=0",
+  "whiteSpace=wrap",
+  "html=1",
+  "fillColor=light-dark(#666666,#cccccc)",
+  "strokeColor=light-dark(#666666,#cccccc)",
+  "connectable=1",
+  "resizable=0",
+  "rotatable=0",
+  "autoDiagramRoutingDivider=1"
+].join(";");
+
 export type DrawioExportOptions = {
   groupFrames?: boolean;
 };
 
+type ExportEndpoint = {
+  id: string;
+  cellId: string;
+  layout: DiagramPoint & { width: number; height: number };
+  kind: "class" | "divider";
+};
+
+type ExportEdgeSpec = {
+  edge: DiagramEdge;
+  sourceId: string;
+  targetId: string;
+  label: string;
+  sourceAnchor?: DiagramEdgeAnchor;
+  targetAnchor?: DiagramEdgeAnchor;
+  waypoints: DiagramPoint[];
+  markerPolicy: EdgeMarkerPolicy;
+  autoRoute?: boolean;
+};
+
+type EdgeMarkerPolicy = {
+  start: boolean;
+  end: boolean;
+};
+
 export function toMxGraphModelXml(document: DiagramDocument, options: DrawioExportOptions = {}): string {
   const nodeIdByDiagramId = createExportCellIdMap(document.nodes, "node");
-  const nodeByDiagramId = new Map(document.nodes.map((node) => [node.id, node]));
-  const bounds = calculateBounds(document.nodes, document.groups ?? []);
+  const dividerIdByDiagramId = createExportCellIdMap(document.routingDividers ?? [], "divider");
+  const endpointByDiagramId = createExportEndpointMap(document.nodes, document.routingDividers ?? [], nodeIdByDiagramId, dividerIdByDiagramId);
+  const bounds = calculateBounds(document.nodes, document.groups ?? [], document.routingDividers ?? []);
   const lines: string[] = [
     `<mxGraphModel dx="${formatNumber(bounds.width)}" dy="${formatNumber(bounds.height)}" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1169" pageHeight="1654" math="0" shadow="0">`,
     "  <root>",
@@ -106,8 +144,17 @@ export function toMxGraphModelXml(document: DiagramDocument, options: DrawioExpo
     lines.push(...buildClassCells(node, nodeCellId));
   });
 
-  document.edges.forEach((edge, index) => {
-    lines.push(buildEdgeCell(edge, index + 1, nodeIdByDiagramId, nodeByDiagramId));
+  (document.routingDividers ?? []).forEach((divider) => {
+    const dividerCellId = dividerIdByDiagramId.get(divider.id);
+    if (!dividerCellId) {
+      throw new Error(`Cannot export routing divider ${divider.id}: missing generated cell id.`);
+    }
+
+    lines.push(buildRoutingDividerCell(divider, dividerCellId));
+  });
+
+  buildExportEdgeSpecs(document).forEach((edge, index) => {
+    lines.push(buildEdgeCell(edge, index + 1, endpointByDiagramId));
   });
 
   lines.push("  </root>", "</mxGraphModel>", "");
@@ -119,6 +166,17 @@ function buildGroupFrameCell(group: DiagramGroup, groupCellId: string): string {
 
   return [
     `    <mxCell id="${groupCellId}" parent="1" style="${escapeXmlAttribute(groupFrameStyle)}" value="${escapeXmlAttribute(group.label)}" vertex="1">`,
+    `      <mxGeometry height="${formatNumber(layout.height)}" width="${formatNumber(layout.width)}" x="${formatNumber(layout.x)}" y="${formatNumber(layout.y)}" as="geometry" />`,
+    "    </mxCell>"
+  ].join("\n");
+}
+
+function buildRoutingDividerCell(divider: DiagramRoutingDivider, dividerCellId: string): string {
+  const layout = divider.layout;
+  const style = `${routingDividerStyle};orientation=${divider.orientation};side=${divider.side}`;
+
+  return [
+    `    <mxCell id="${dividerCellId}" parent="1" style="${escapeXmlAttribute(style)}" vertex="1">`,
     `      <mxGeometry height="${formatNumber(layout.height)}" width="${formatNumber(layout.width)}" x="${formatNumber(layout.x)}" y="${formatNumber(layout.y)}" as="geometry" />`,
     "    </mxCell>"
   ].join("\n");
@@ -203,29 +261,263 @@ function buildSeparatorCell(
 }
 
 function buildEdgeCell(
-  edge: DiagramEdge,
+  edgeSpec: ExportEdgeSpec,
   index: number,
-  nodeIdByDiagramId: Map<string, string>,
-  nodeByDiagramId: Map<string, DiagramNode>
+  endpointByDiagramId: Map<string, ExportEndpoint>
 ): string {
-  const source = nodeIdByDiagramId.get(edge.sourceId);
-  const target = nodeIdByDiagramId.get(edge.targetId);
-  const sourceNode = nodeByDiagramId.get(edge.sourceId);
-  const targetNode = nodeByDiagramId.get(edge.targetId);
+  const source = endpointByDiagramId.get(edgeSpec.sourceId);
+  const target = endpointByDiagramId.get(edgeSpec.targetId);
 
-  if (!source || !target || !sourceNode || !targetNode) {
-    throw new Error(`Cannot export edge ${edge.id}: missing source or target node.`);
+  if (!source || !target) {
+    throw new Error(`Cannot export edge ${edgeSpec.edge.id}: missing source or target endpoint.`);
   }
 
   return [
-    `    <mxCell id="edge_${index}" edge="1" parent="1" source="${source}" style="${escapeXmlAttribute(edgeStyle(edge))}" target="${target}" value="${escapeXmlAttribute(edge.label ?? "")}">`,
-    buildEdgeGeometry(edge, sourceNode, targetNode),
+    `    <mxCell id="edge_${index}" edge="1" parent="1" source="${source.cellId}" style="${escapeXmlAttribute(edgeStyle(edgeSpec.edge, edgeSpec, edgeSpec.markerPolicy))}" target="${target.cellId}" value="${escapeXmlAttribute(edgeSpec.label)}">`,
+    buildEdgeGeometry(edgeSpec, source, target),
     "    </mxCell>"
   ].join("\n");
 }
 
-function buildEdgeGeometry(edge: DiagramEdge, sourceNode: DiagramNode, targetNode: DiagramNode): string {
-  const waypoints = exportWaypoints(edge, sourceNode, targetNode);
+function buildExportEdgeSpecs(document: DiagramDocument): ExportEdgeSpec[] {
+  const dividers = document.routingDividers ?? [];
+  const edgeById = new Map(document.edges.map((edge) => [edge.id, edge]));
+  const dividerByEdgeId = new Map<string, DiagramRoutingDivider>();
+  const claimedEdgeIds = new Set<string>();
+  const specs: ExportEdgeSpec[] = [];
+
+  for (const divider of dividers) {
+    for (const edgeId of divider.sourceEdgeIds) {
+      dividerByEdgeId.set(edgeId, divider);
+    }
+  }
+
+  for (const edge of document.edges) {
+    const divider = dividerByEdgeId.get(edge.id);
+    if (!divider || claimedEdgeIds.has(edge.id)) {
+      if (!divider) {
+        specs.push(directExportEdgeSpec(edge));
+      }
+      continue;
+    }
+
+    const dividerEdges = divider.sourceEdgeIds
+      .map((edgeId) => edgeById.get(edgeId))
+      .filter((candidate): candidate is DiagramEdge => Boolean(candidate));
+
+    if (dividerEdges.length === 0) {
+      continue;
+    }
+
+    specs.push(...splitDividerEdgeSpecs(divider, dividerEdges));
+    dividerEdges.forEach((dividerEdge) => claimedEdgeIds.add(dividerEdge.id));
+  }
+
+  return specs;
+}
+
+function directExportEdgeSpec(edge: DiagramEdge): ExportEdgeSpec {
+  return {
+    edge,
+    sourceId: edge.sourceId,
+    targetId: edge.targetId,
+    label: edge.label ?? "",
+    sourceAnchor: edge.layout?.sourceAnchor,
+    targetAnchor: edge.layout?.targetAnchor,
+    waypoints: edge.layout?.waypoints ?? [],
+    markerPolicy: { start: true, end: true }
+  };
+}
+
+function splitDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEdge[]): ExportEdgeSpec[] {
+  return divider.mode === "fanOut"
+    ? fanOutDividerEdgeSpecs(divider, edges)
+    : fanInDividerEdgeSpecs(divider, edges);
+}
+
+function fanOutDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEdge[]): ExportEdgeSpec[] {
+  const firstEdge = edges[0];
+  const sourceAnchor = sharedClassAnchor(edges, "source") ?? classAnchorTowardDivider(firstEdge, "source", divider);
+  const dividerInputAnchor = dividerOuterAnchor(divider);
+  const orderedLeaves = orderEdgesForDivider(divider, edges, "target", oppositeSide(divider.side));
+
+  return [
+    {
+      edge: firstEdge,
+      sourceId: firstEdge.sourceId,
+      targetId: divider.id,
+      label: "",
+      sourceAnchor,
+      targetAnchor: dividerInputAnchor,
+      waypoints: [],
+      markerPolicy: { start: true, end: false },
+      autoRoute: true
+    },
+    ...orderedLeaves.map(({ edge, dividerAnchor }) => {
+      const targetAnchor = classAnchorForDividerSide(edge, "target", dividerAnchor.side);
+      return {
+        edge,
+        sourceId: divider.id,
+        targetId: edge.targetId,
+        label: edge.label ?? "",
+        sourceAnchor: dividerAnchor,
+        targetAnchor,
+        waypoints: [],
+        markerPolicy: { start: false, end: true },
+        autoRoute: true
+      };
+    })
+  ];
+}
+
+function fanInDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEdge[]): ExportEdgeSpec[] {
+  const firstEdge = edges[0];
+  const targetAnchor = sharedClassAnchor(edges, "target") ?? classAnchorTowardDivider(firstEdge, "target", divider);
+  const dividerOutputAnchor = dividerOuterAnchor(divider);
+  const orderedLeaves = orderEdgesForDivider(divider, edges, "source", oppositeSide(divider.side));
+
+  return [
+    ...orderedLeaves.map(({ edge, dividerAnchor }) => {
+      const sourceAnchor = classAnchorForDividerSide(edge, "source", dividerAnchor.side);
+      return {
+        edge,
+        sourceId: edge.sourceId,
+        targetId: divider.id,
+        label: edge.label ?? "",
+        sourceAnchor,
+        targetAnchor: dividerAnchor,
+        waypoints: [],
+        markerPolicy: { start: true, end: false },
+        autoRoute: true
+      };
+    }),
+    {
+      edge: firstEdge,
+      sourceId: divider.id,
+      targetId: firstEdge.targetId,
+      label: "",
+      sourceAnchor: dividerOutputAnchor,
+      targetAnchor,
+      waypoints: [],
+      markerPolicy: { start: false, end: true },
+      autoRoute: true
+    }
+  ];
+}
+
+function orderEdgesForDivider(
+  divider: DiagramRoutingDivider,
+  edges: DiagramEdge[],
+  classEndpoint: "source" | "target",
+  dividerSide: DiagramEdgeAnchor["side"]
+): Array<{ edge: DiagramEdge; dividerAnchor: DiagramEdgeAnchor }> {
+  const sorted = [...edges].sort((left, right) =>
+    dividerSortCoordinate(left, classEndpoint) - dividerSortCoordinate(right, classEndpoint) ||
+    left.id.localeCompare(right.id)
+  );
+
+  return sorted.map((edge, index) => ({
+    edge,
+    dividerAnchor: {
+      side: dividerSide,
+      ratio: roundRatio((index + 1) / (sorted.length + 1))
+    }
+  }));
+}
+
+function dividerSortCoordinate(edge: DiagramEdge, classEndpoint: "source" | "target"): number {
+  const anchor = classEndpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
+  return anchor?.ratio ?? 0.5;
+}
+
+function dividerOuterAnchor(divider: DiagramRoutingDivider): DiagramEdgeAnchor {
+  return {
+    side: divider.side,
+    ratio: 0.5
+  };
+}
+
+function classAnchorTowardDivider(edge: DiagramEdge, endpoint: "source" | "target", divider: DiagramRoutingDivider): DiagramEdgeAnchor {
+  const anchor = endpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
+  if (anchor) {
+    return anchor;
+  }
+
+  return {
+    side: oppositeSide(divider.side),
+    ratio: 0.5
+  };
+}
+
+function classAnchorForDividerSide(edge: DiagramEdge, endpoint: "source" | "target", dividerSide: DiagramEdgeAnchor["side"]): DiagramEdgeAnchor {
+  const desiredSide = oppositeSide(dividerSide);
+  const existing = endpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
+
+  return {
+    side: desiredSide,
+    ratio: existing?.side === desiredSide ? existing.ratio : stableAnchorRatio(edge.id)
+  };
+}
+
+function stableAnchorRatio(value: string): number {
+  let hash = 0;
+
+  for (const character of value) {
+    hash = (hash * 31 + character.charCodeAt(0)) % 700;
+  }
+
+  return roundRatio(0.15 + hash / 1000);
+}
+
+function sharedClassAnchor(edges: DiagramEdge[], endpoint: "source" | "target"): DiagramEdgeAnchor | undefined {
+  const anchors = edges
+    .map((edge) => endpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor)
+    .filter((anchor): anchor is DiagramEdgeAnchor => Boolean(anchor));
+
+  if (anchors.length === 0) {
+    return undefined;
+  }
+
+  const side = anchors[0].side;
+  if (!anchors.every((anchor) => anchor.side === side)) {
+    return anchors[0];
+  }
+
+  return {
+    side,
+    ratio: 0.5
+  };
+}
+
+function simpleSplitWaypoints(
+  source: ExportEndpoint,
+  target: ExportEndpoint,
+  sourceAnchor: DiagramEdgeAnchor | undefined,
+  targetAnchor: DiagramEdgeAnchor | undefined
+): DiagramPoint[] {
+  if (!sourceAnchor || !targetAnchor) {
+    return [];
+  }
+
+  const sourcePoint = edgeAnchorPoint(source.layout, sourceAnchor);
+  const targetPoint = edgeAnchorPoint(target.layout, targetAnchor);
+  const sourcePort = outsidePort(sourcePoint, sourceAnchor);
+  const targetPort = outsidePort(targetPoint, targetAnchor);
+  const points = sourceAnchor.side === "north" || sourceAnchor.side === "south"
+    ? [sourcePoint, sourcePort, { x: targetPort.x, y: sourcePort.y }, targetPort, targetPoint]
+    : [sourcePoint, sourcePort, { x: sourcePort.x, y: targetPort.y }, targetPort, targetPoint];
+
+  return compactOrthogonalPoints(points).slice(1, -1);
+}
+
+function buildEdgeGeometry(edgeSpec: ExportEdgeSpec, source: ExportEndpoint, target: ExportEndpoint): string {
+  const routedEdgeSpec = edgeSpec.autoRoute
+    ? {
+      ...edgeSpec,
+      waypoints: simpleSplitWaypoints(source, target, edgeSpec.sourceAnchor, edgeSpec.targetAnchor)
+    }
+    : edgeSpec;
+  const waypoints = exportWaypoints(routedEdgeSpec, source, target);
 
   if (waypoints.length === 0) {
     return [
@@ -248,13 +540,13 @@ function buildWaypointCell(point: DiagramPoint): string {
   return `          <mxPoint x="${formatNumber(point.x)}" y="${formatNumber(point.y)}" />`;
 }
 
-function exportWaypoints(edge: DiagramEdge, sourceNode: DiagramNode, targetNode: DiagramNode): DiagramPoint[] {
-  const waypoints = edge.layout?.waypoints ?? [];
-  const sourcePoint = edge.layout?.sourceAnchor
-    ? edgeAnchorPoint(requireLayout(sourceNode), edge.layout.sourceAnchor)
+function exportWaypoints(edgeSpec: ExportEdgeSpec, source: ExportEndpoint, target: ExportEndpoint): DiagramPoint[] {
+  const waypoints = edgeSpec.waypoints;
+  const sourcePoint = edgeSpec.sourceAnchor
+    ? edgeAnchorPoint(source.layout, edgeSpec.sourceAnchor)
     : undefined;
-  const targetPoint = edge.layout?.targetAnchor
-    ? edgeAnchorPoint(requireLayout(targetNode), edge.layout.targetAnchor)
+  const targetPoint = edgeSpec.targetAnchor
+    ? edgeAnchorPoint(target.layout, edgeSpec.targetAnchor)
     : undefined;
   const cleaned: DiagramPoint[] = [];
 
@@ -277,7 +569,7 @@ function exportWaypoints(edge: DiagramEdge, sourceNode: DiagramNode, targetNode:
   return cleaned;
 }
 
-function edgeAnchorPoint(layout: DiagramNodeLayout, anchor: DiagramEdgeAnchor): DiagramPoint {
+function edgeAnchorPoint(layout: DiagramPoint & { width: number; height: number }, anchor: DiagramEdgeAnchor): DiagramPoint {
   if (anchor.side === "north") {
     return { x: layout.x + layout.width * anchor.ratio, y: layout.y };
   }
@@ -293,15 +585,88 @@ function edgeAnchorPoint(layout: DiagramNodeLayout, anchor: DiagramEdgeAnchor): 
   return { x: layout.x + layout.width, y: layout.y + layout.height * anchor.ratio };
 }
 
+function outsidePort(point: DiagramPoint, anchor: DiagramEdgeAnchor): DiagramPoint {
+  const distance = 24;
+
+  if (anchor.side === "north") {
+    return { x: point.x, y: point.y - distance };
+  }
+
+  if (anchor.side === "south") {
+    return { x: point.x, y: point.y + distance };
+  }
+
+  if (anchor.side === "west") {
+    return { x: point.x - distance, y: point.y };
+  }
+
+  return { x: point.x + distance, y: point.y };
+}
+
+function compactOrthogonalPoints(points: DiagramPoint[]): DiagramPoint[] {
+  const withoutDuplicates = removeDuplicateConsecutivePoints(points);
+  return withoutDuplicates.filter((point, index, all) => {
+    if (index === 0 || index === all.length - 1) {
+      return true;
+    }
+
+    const previous = all[index - 1];
+    const next = all[index + 1];
+    return !(
+      (previous.x === point.x && point.x === next.x) ||
+      (previous.y === point.y && point.y === next.y)
+    );
+  });
+}
+
+function removeDuplicateConsecutivePoints(points: DiagramPoint[]): DiagramPoint[] {
+  const cleaned: DiagramPoint[] = [];
+
+  for (const point of points) {
+    if (cleaned.length === 0 || !pointsEqual(cleaned[cleaned.length - 1], point)) {
+      cleaned.push(point);
+    }
+  }
+
+  return cleaned;
+}
+
+function oppositeSide(side: DiagramEdgeAnchor["side"]): DiagramEdgeAnchor["side"] {
+  if (side === "north") {
+    return "south";
+  }
+
+  if (side === "south") {
+    return "north";
+  }
+
+  if (side === "west") {
+    return "east";
+  }
+
+  return "west";
+}
+
+function roundRatio(value: number): number {
+  return Number(value.toFixed(3));
+}
+
+function centerOf(rectangle: { x: number; y: number; width: number; height: number }): DiagramPoint {
+  return {
+    x: rectangle.x + rectangle.width / 2,
+    y: rectangle.y + rectangle.height / 2
+  };
+}
+
 function pointsEqual(left: DiagramPoint, right: DiagramPoint): boolean {
   return Math.abs(left.x - right.x) < 0.001 && Math.abs(left.y - right.y) < 0.001;
 }
 
-function edgeStyle(edge: DiagramEdge): string {
-  const semanticStyle = edgeSemanticStyle(edge);
+function edgeStyle(edge: DiagramEdge, edgeSpec: ExportEdgeSpec, markerPolicy: EdgeMarkerPolicy = { start: true, end: true }): string {
+  const semanticStyle = edgeSemanticStyle(edge, markerPolicy);
   const anchorStyle = [
-    ...anchorStyleParts("exit", edge.layout?.sourceAnchor),
-    ...anchorStyleParts("entry", edge.layout?.targetAnchor)
+    ...anchorStyleParts("exit", edgeSpec.sourceAnchor),
+    ...anchorStyleParts("entry", edgeSpec.targetAnchor)
   ];
 
   return [
@@ -316,7 +681,28 @@ function edgeStyle(edge: DiagramEdge): string {
   ].join(";");
 }
 
-function edgeSemanticStyle(edge: DiagramEdge): string[] {
+function edgeSemanticStyle(edge: DiagramEdge, markerPolicy: EdgeMarkerPolicy): string[] {
+  const parts = baseEdgeSemanticStyle(edge);
+
+  if (markerPolicy.start && markerPolicy.end) {
+    return parts;
+  }
+
+  const strippedStart = markerPolicy.start ? parts : stripMarkerParts(parts, "start");
+  const stripped = markerPolicy.end ? strippedStart : stripMarkerParts(strippedStart, "end");
+
+  return [
+    ...stripped,
+    ...(markerPolicy.start ? [] : ["startArrow=none"]),
+    ...(markerPolicy.end ? [] : ["endArrow=none"])
+  ];
+}
+
+function stripMarkerParts(parts: string[], endpoint: "start" | "end"): string[] {
+  return parts.filter((part) => !part.startsWith(`${endpoint}Arrow=`) && !part.startsWith(`${endpoint}Fill=`) && !part.startsWith(`${endpoint}Size=`));
+}
+
+function baseEdgeSemanticStyle(edge: DiagramEdge): string[] {
   switch (edge.operator) {
     case "--":
       return ["startArrow=none", "endArrow=none"];
@@ -396,19 +782,57 @@ function requireGroupLayout(group: DiagramGroup): NonNullable<DiagramGroup["layo
   return group.layout;
 }
 
-function calculateBounds(nodes: DiagramNode[], groups: DiagramGroup[]): { width: number; height: number } {
+function calculateBounds(nodes: DiagramNode[], groups: DiagramGroup[], dividers: DiagramRoutingDivider[]): { width: number; height: number } {
   const width = Math.max(
     1169,
     ...nodes.map((node) => (node.layout ? node.layout.x + node.layout.width + 80 : 0)),
-    ...groups.map((group) => (group.layout ? group.layout.x + group.layout.width + 80 : 0))
+    ...groups.map((group) => (group.layout ? group.layout.x + group.layout.width + 80 : 0)),
+    ...dividers.map((divider) => divider.layout.x + divider.layout.width + 80)
   );
   const height = Math.max(
     1654,
     ...nodes.map((node) => (node.layout ? node.layout.y + node.layout.height + 80 : 0)),
-    ...groups.map((group) => (group.layout ? group.layout.y + group.layout.height + 80 : 0))
+    ...groups.map((group) => (group.layout ? group.layout.y + group.layout.height + 80 : 0)),
+    ...dividers.map((divider) => divider.layout.y + divider.layout.height + 80)
   );
 
   return { width, height };
+}
+
+function createExportEndpointMap(
+  nodes: DiagramNode[],
+  dividers: DiagramRoutingDivider[],
+  nodeIdByDiagramId: Map<string, string>,
+  dividerIdByDiagramId: Map<string, string>
+): Map<string, ExportEndpoint> {
+  return new Map([
+    ...nodes.map((node): [string, ExportEndpoint] => {
+      const cellId = nodeIdByDiagramId.get(node.id);
+      if (!cellId) {
+        throw new Error(`Cannot export node ${node.id}: missing generated cell id.`);
+      }
+
+      return [node.id, {
+        id: node.id,
+        cellId,
+        layout: requireLayout(node),
+        kind: "class"
+      }];
+    }),
+    ...dividers.map((divider): [string, ExportEndpoint] => {
+      const cellId = dividerIdByDiagramId.get(divider.id);
+      if (!cellId) {
+        throw new Error(`Cannot export routing divider ${divider.id}: missing generated cell id.`);
+      }
+
+      return [divider.id, {
+        id: divider.id,
+        cellId,
+        layout: divider.layout,
+        kind: "divider"
+      }];
+    })
+  ]);
 }
 
 function createExportCellIdMap(items: Array<{ id: string }>, type: string): Map<string, string> {

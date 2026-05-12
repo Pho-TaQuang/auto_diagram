@@ -36,6 +36,11 @@ export function runStereotypeGridLayoutTests(): void {
   appliesManualAnchorOrderIntent();
   spacesDenseSharedSideAnchorsEvenly();
   routesSuggestedDemoWithRowAwareFanout();
+  createsVerticalFanOutRoutingDivider();
+  createsVerticalFanInRoutingDivider();
+  createsHorizontalFanOutRoutingDividerForVerticalGroupGap();
+  usesDifferentClusterSidesForMultipleDividersOnSameCluster();
+  skipsRoutingDividerBelowDenseThreshold();
   placesDemoGroupsWithoutNodeOverlap();
   placesDmLoaiLucLuongGroupsWithoutNodeOverlap();
 }
@@ -641,6 +646,133 @@ function spacesDenseSharedSideAnchorsEvenly(): void {
   assert.ok(sourceAnchors.every((anchor) => anchor.ratio >= 0.05 && anchor.ratio <= 0.95));
 }
 
+function createsVerticalFanOutRoutingDivider(): void {
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "<<Model>> ThirdModel",
+    "<<Model>> FourthModel",
+    "SourceController ..> FirstModel : first",
+    "SourceController ..> SecondModel : second",
+    "SourceController ..> ThirdModel : third",
+    "SourceController ..> FourthModel : fourth"
+  ].join("\n"));
+  const intent = createStereotypeLayoutIntent(parsed, { columns: 2, rows: 1 });
+  const document = applyStereotypeGridLayout(parsed, { intent });
+  const divider = document.routingDividers?.[0];
+  const controllerGroup = requireGroup(document.groups, "Controller", "stereotype");
+  const modelGroup = requireGroup(document.groups, "Model", "stereotype");
+
+  assert.equal(document.routingDividers?.length, 1);
+  assert.ok(divider);
+  assert.equal(divider.mode, "fanOut");
+  assert.equal(divider.orientation, "vertical");
+  assert.equal(divider.side, "west");
+  assert.deepEqual(divider.sourceEdgeIds, document.edges.map((edge) => edge.id));
+  assert.ok(divider.layout.x > right(requireGroupLayout(controllerGroup)));
+  assert.ok(divider.layout.x + divider.layout.width < requireGroupLayout(modelGroup).x);
+}
+
+function createsVerticalFanInRoutingDivider(): void {
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> FirstController",
+    "<<Controller>> SecondController",
+    "<<Controller>> ThirdController",
+    "<<Controller>> FourthController",
+    "<<Model>> TargetModel",
+    "FirstController ..> TargetModel : first",
+    "SecondController ..> TargetModel : second",
+    "ThirdController ..> TargetModel : third",
+    "FourthController ..> TargetModel : fourth"
+  ].join("\n"));
+  const intent = createStereotypeLayoutIntent(parsed, { columns: 2, rows: 1 });
+  const document = applyStereotypeGridLayout(parsed, { intent });
+  const divider = document.routingDividers?.[0];
+
+  assert.equal(document.routingDividers?.length, 1);
+  assert.ok(divider);
+  assert.equal(divider.mode, "fanIn");
+  assert.equal(divider.orientation, "vertical");
+  assert.equal(divider.side, "east");
+  assert.deepEqual(divider.sourceEdgeIds, document.edges.map((edge) => edge.id));
+}
+
+function createsHorizontalFanOutRoutingDividerForVerticalGroupGap(): void {
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "<<Model>> ThirdModel",
+    "<<Model>> FourthModel",
+    "SourceController ..> FirstModel : first",
+    "SourceController ..> SecondModel : second",
+    "SourceController ..> ThirdModel : third",
+    "SourceController ..> FourthModel : fourth"
+  ].join("\n"));
+  const intent = createStereotypeLayoutIntent(parsed, { columns: 1, rows: 2 });
+  setIntentGroupPlacement(intent, "Controller", 0, 0, "vertical");
+  setIntentGroupPlacement(intent, "Model", 0, 1, "horizontal");
+
+  const document = applyStereotypeGridLayout(parsed, { intent });
+  const divider = document.routingDividers?.[0];
+  const controllerGroup = requireGroup(document.groups, "Controller", "stereotype");
+  const modelGroup = requireGroup(document.groups, "Model", "stereotype");
+
+  assert.equal(document.routingDividers?.length, 1);
+  assert.ok(divider);
+  assert.equal(divider.mode, "fanOut");
+  assert.equal(divider.orientation, "horizontal");
+  assert.equal(divider.side, "north");
+  assert.ok(divider.layout.y > bottom(requireGroupLayout(controllerGroup)));
+  assert.ok(divider.layout.y + divider.layout.height < requireGroupLayout(modelGroup).y);
+}
+
+function usesDifferentClusterSidesForMultipleDividersOnSameCluster(): void {
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> FirstController",
+    "<<Controller>> SecondController",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "<<Model>> ThirdModel",
+    "<<Model>> FourthModel",
+    "FirstController ..> FirstModel : first",
+    "FirstController ..> SecondModel : second",
+    "FirstController ..> ThirdModel : third",
+    "FirstController ..> FourthModel : fourth",
+    "SecondController ..> FirstModel : fifth",
+    "SecondController ..> SecondModel : sixth",
+    "SecondController ..> ThirdModel : seventh",
+    "SecondController ..> FourthModel : eighth"
+  ].join("\n"));
+  const intent = createStereotypeLayoutIntent(parsed, { columns: 2, rows: 1 });
+  const document = applyStereotypeGridLayout(parsed, { intent });
+  const dividers = document.routingDividers ?? [];
+  const sides = dividers.map((divider) => divider.side);
+
+  assert.equal(dividers.length, 2);
+  assert.equal(new Set(sides).size, sides.length);
+}
+
+function skipsRoutingDividerBelowDenseThreshold(): void {
+  const document = applyStereotypeGridLayout(parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "<<Model>> ThirdModel",
+    "SourceController ..> FirstModel : first",
+    "SourceController ..> SecondModel : second",
+    "SourceController ..> ThirdModel : third"
+  ].join("\n")));
+
+  assert.equal(document.routingDividers, undefined);
+}
+
 function placesDemoGroupsWithoutNodeOverlap(): void {
   const document = applyStereotypeGridLayout(parseMermaidClassDiagram(demoFixture));
 
@@ -824,6 +956,13 @@ function requireLayout(node: DiagramNode): NonNullable<DiagramNode["layout"]> {
   return node.layout;
 }
 
+function requireGroupLayout(group: DiagramGroup): NonNullable<DiagramGroup["layout"]> {
+  assert.ok(group.layout, `Expected ${group.id} to have group layout.`);
+  assert.ok(group.layout.width > 0, `Expected ${group.id} to have positive width.`);
+  assert.ok(group.layout.height > 0, `Expected ${group.id} to have positive height.`);
+  return group.layout;
+}
+
 function centerX(rectangle: { x: number; width: number }): number {
   return rectangle.x + rectangle.width / 2;
 }
@@ -834,6 +973,10 @@ function centerY(rectangle: { y: number; height: number }): number {
 
 function bottom(rectangle: { y: number; height: number }): number {
   return rectangle.y + rectangle.height;
+}
+
+function right(rectangle: { x: number; width: number }): number {
+  return rectangle.x + rectangle.width;
 }
 
 function rectanglesOverlap(

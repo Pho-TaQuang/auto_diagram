@@ -48,6 +48,15 @@ export type MxLayoutClass = {
   children: MxGraphCell[];
 };
 
+export type MxLayoutDivider = {
+  id: string;
+  orientation: "vertical" | "horizontal";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type MxLayoutEdgeKind = "dependency" | "realization" | "inheritance" | "association" | "directedAssociation" | "aggregation" | "composition" | "dashedAssociation";
 
 export type MxLayoutEdgeMarker = "none" | "open" | "block" | "diamondOpen" | "diamondFilled";
@@ -78,6 +87,7 @@ export type MxLayoutGroup = {
 
 export type MxLayoutViewModel = {
   classes: MxLayoutClass[];
+  dividers: MxLayoutDivider[];
   edges: MxLayoutEdge[];
   extendsEdges: MxLayoutEdge[];
   groups: MxLayoutGroup[];
@@ -175,11 +185,25 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
     };
   });
   const classById = new Map(classes.map((classCell) => [classCell.id, classCell]));
+  const dividers = model.cells.filter(isRoutingDividerCell).map((cell): MxLayoutDivider => {
+    const geometry = requireGeometry(cell);
+    const style = parseStyle(cell.attributes.style ?? "");
+
+    return {
+      id: cell.id,
+      orientation: style.get("orientation") === "horizontal" ? "horizontal" : "vertical",
+      x: readNumber(geometry.attributes.x, 0),
+      y: readNumber(geometry.attributes.y, 0),
+      width: readNumber(geometry.attributes.width, 10),
+      height: readNumber(geometry.attributes.height, 10)
+    };
+  });
+  const endpointIds = new Set([...classes.map((classCell) => classCell.id), ...dividers.map((divider) => divider.id)]);
   const edges = model.cells.filter((cell) => cell.attributes.edge === "1").map((cell): MxLayoutEdge => {
     const sourceId = resolveClassEndpoint(cell.attributes.source, parentByChildId);
     const targetId = resolveClassEndpoint(cell.attributes.target, parentByChildId);
 
-    if (!cell.attributes.source || !sourceId || !classById.has(sourceId)) {
+    if (!cell.attributes.source || !sourceId || !endpointIds.has(sourceId)) {
       diagnostics.push({
         severity: "error",
         cellId: cell.id,
@@ -187,7 +211,7 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
       });
     }
 
-    if (!cell.attributes.target || !targetId || !classById.has(targetId)) {
+    if (!cell.attributes.target || !targetId || !endpointIds.has(targetId)) {
       diagnostics.push({
         severity: "error",
         cellId: cell.id,
@@ -195,7 +219,7 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
       });
     }
 
-    if (cell.attributes.source && cell.attributes.source !== sourceId) {
+    if (cell.attributes.source && cell.attributes.source !== sourceId && sourceId && classById.has(sourceId)) {
       diagnostics.push({
         severity: "warning",
         cellId: cell.id,
@@ -203,7 +227,7 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
       });
     }
 
-    if (cell.attributes.target && cell.attributes.target !== targetId) {
+    if (cell.attributes.target && cell.attributes.target !== targetId && targetId && classById.has(targetId)) {
       diagnostics.push({
         severity: "warning",
         cellId: cell.id,
@@ -239,11 +263,12 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
 
   return {
     classes,
+    dividers,
     edges,
     extendsEdges: edges.filter((edge) => edge.kind === "inheritance" || edge.kind === "realization"),
     groups,
     diagnostics,
-    bounds: calculateBounds(classes, groups)
+    bounds: calculateBounds(classes, groups, dividers)
   };
 }
 
@@ -422,6 +447,11 @@ function serializeAttributes(attributes: Record<string, string>): string {
 
 function isClassCell(cell: MxGraphCell): boolean {
   return cell.attributes.vertex === "1" && cell.attributes.parent === "1" && (cell.attributes.style ?? "").startsWith("swimlane");
+}
+
+function isRoutingDividerCell(cell: MxGraphCell): boolean {
+  const style = cell.attributes.style ?? "";
+  return cell.attributes.vertex === "1" && cell.attributes.parent === "1" && style.split(";").includes("autoDiagramRoutingDivider=1");
 }
 
 function requireGeometry(cell: MxGraphCell): MxGeometry {
@@ -812,10 +842,20 @@ function validateEdgeClassHits(edges: MxLayoutEdge[], classes: MxLayoutClass[]):
   return diagnostics;
 }
 
-function calculateBounds(classes: MxLayoutClass[], groups: MxLayoutGroup[]): { width: number; height: number } {
+function calculateBounds(classes: MxLayoutClass[], groups: MxLayoutGroup[], dividers: MxLayoutDivider[]): { width: number; height: number } {
   return {
-    width: Math.max(1169, ...classes.map((classCell) => classCell.x + classCell.width + 80), ...groups.map((group) => group.x + group.width + 80)),
-    height: Math.max(900, ...classes.map((classCell) => classCell.y + classCell.height + 80), ...groups.map((group) => group.y + group.height + 80))
+    width: Math.max(
+      1169,
+      ...classes.map((classCell) => classCell.x + classCell.width + 80),
+      ...groups.map((group) => group.x + group.width + 80),
+      ...dividers.map((divider) => divider.x + divider.width + 80)
+    ),
+    height: Math.max(
+      900,
+      ...classes.map((classCell) => classCell.y + classCell.height + 80),
+      ...groups.map((group) => group.y + group.height + 80),
+      ...dividers.map((divider) => divider.y + divider.height + 80)
+    )
   };
 }
 

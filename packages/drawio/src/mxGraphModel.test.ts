@@ -24,6 +24,7 @@ export function runMxGraphModelTests(): void {
   updatesEdgeTerminals();
   separatesExtendsRelationships();
   parsesEdgeMarkersFromStyle();
+  parsesRoutingDividersAsValidEndpoints();
   importsUncompressedDrawioWrapper();
 }
 
@@ -140,6 +141,29 @@ function parsesEdgeMarkersFromStyle(): void {
   assertEdgeMarkers(view.edges, "inheritance-right", "none", "block", "inheritance");
   assertEdgeMarkers(view.edges, "dependency-left", "open", "none", "dependency");
   assertEdgeMarkers(view.edges, "dependency-right", "none", "open", "dependency");
+}
+
+function parsesRoutingDividersAsValidEndpoints(): void {
+  const xml = toMxGraphModelXml(applyStereotypeGridLayout(parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "<<Model>> ThirdModel",
+    "<<Model>> FourthModel",
+    "SourceController ..> FirstModel : first",
+    "SourceController ..> SecondModel : second",
+    "SourceController ..> ThirdModel : third",
+    "SourceController ..> FourthModel : fourth"
+  ].join("\n"))));
+  const view = extractLayoutViewModel(parseMxGraphModelXml(xml));
+
+  assert.equal(view.classes.length, 5);
+  assert.equal(view.dividers.length, 1);
+  assert.equal(view.edges.length, 5);
+  assert.equal(view.diagnostics.some((diagnostic) => diagnostic.message.includes("invalid source") || diagnostic.message.includes("invalid target")), false);
+  assert.ok(view.edges.some((edge) => edge.sourceId === view.dividers[0].id));
+  assert.ok(view.edges.some((edge) => edge.targetId === view.dividers[0].id));
 }
 
 function importsUncompressedDrawioWrapper(): void {

@@ -603,6 +603,13 @@ button:disabled {
   fill: var(--shape-muted);
 }
 
+.preview-divider {
+  fill: var(--text-secondary);
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
 .drag-coordinate rect {
   fill: var(--bg-panel);
   stroke: var(--selection-color);

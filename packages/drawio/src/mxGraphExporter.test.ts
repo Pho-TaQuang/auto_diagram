@@ -16,6 +16,7 @@ export function runDrawioExporterTests(): void {
   exportsVisibleGroupFramesWhenEnabled();
   exportsEdgeWaypoints();
   exportsOrthogonalAnchoredEdges();
+  exportsDenseRoutingDividersAsSplitEdges();
   exportsOperatorSpecificArrowEnds();
   exportsExplicitSwimlaneHeaderSizes();
   exportsThreeClassCompartments();
@@ -102,6 +103,38 @@ function exportsOrthogonalAnchoredEdges(): void {
   assert.ok(edgeCells.every((cell) => /(?:^|;)exitPerimeter=0(?:;|$)/.test(String(cell.style))));
   assert.ok(edgeCells.every((cell) => /(?:^|;)entryPerimeter=0(?:;|$)/.test(String(cell.style))));
   assert.ok(edgeCells.every((cell) => !waypointsForCell(cell).some((point) => point.as === "sourcePoint" || point.as === "targetPoint")));
+}
+
+function exportsDenseRoutingDividersAsSplitEdges(): void {
+  const xml = renderFixture([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "<<Model>> ThirdModel",
+    "<<Model>> FourthModel",
+    "SourceController ..> FirstModel : first",
+    "SourceController ..> SecondModel : second",
+    "SourceController ..> ThirdModel : third",
+    "SourceController ..> FourthModel : fourth"
+  ].join("\n"));
+  assert.equal(XMLValidator.validate(xml), true);
+
+  const cells = asArray(parseXml(xml).mxGraphModel.root.mxCell);
+  const classCells = cells.filter(isClassCell);
+  const dividerCells = cells.filter((cell) => String(cell.style).includes("autoDiagramRoutingDivider=1"));
+  const edgeCells = cells.filter((cell) => cell.edge === "1");
+  const classIds = new Set(classCells.map((cell) => cell.id));
+  const dividerIds = new Set(dividerCells.map((cell) => cell.id));
+
+  assert.equal(classCells.length, 5);
+  assert.equal(dividerCells.length, 1);
+  assert.equal(edgeCells.length, 5);
+  assert.ok(dividerCells.every((cell) => !String(cell.style).startsWith("swimlane")));
+  assert.ok(edgeCells.every((cell) => classIds.has(cell.source) || dividerIds.has(cell.source)));
+  assert.ok(edgeCells.every((cell) => classIds.has(cell.target) || dividerIds.has(cell.target)));
+  assert.equal(edgeCells.filter((cell) => dividerIds.has(cell.source)).length, 4);
+  assert.equal(edgeCells.filter((cell) => dividerIds.has(cell.target)).length, 1);
 }
 
 function exportsOperatorSpecificArrowEnds(): void {

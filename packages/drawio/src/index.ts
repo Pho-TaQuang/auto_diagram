@@ -22,6 +22,7 @@ export type {
   MxGraphDiagnostic,
   MxGraphModel,
   MxLayoutClass,
+  MxLayoutDivider,
   MxLayoutEdge,
   MxLayoutEdgeKind,
   MxLayoutEdgeMarker,

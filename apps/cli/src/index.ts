@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 import { toMxGraphModelXml } from "../../../packages/drawio/src/index.js";
 import {
   applyStereotypeGridLayout,
+  createRelativeFlowLayout,
   createStereotypeLayoutIntent,
-  normalizeStereotypeLayoutIntent
+  relativeFlowLayoutToStereotypeLayoutIntent
 } from "../../../packages/layout/src/index.js";
-import type { StereotypeLayoutIntent } from "../../../packages/layout/src/index.js";
+import type { RelativeFlowLayout } from "../../../packages/layout/src/index.js";
 import { parseMermaidClassDiagram } from "../../../packages/parsers/src/index.js";
 
 type GenerateArgs = {
@@ -30,12 +31,12 @@ export async function runCliCommand(args: string[]): Promise<void> {
   if (command === "layout:init") {
     const options = parseLayoutInitArgs(args.slice(1));
     const parsed = await parseInput(options.input);
-    const intent = createStereotypeLayoutIntent(parsed, {
+    const layout = createRelativeFlowLayout(parsed, {
       placement: options.suggestedLayout ? "suggested" : "grid"
     });
 
     await mkdir(path.dirname(options.output), { recursive: true });
-    await writeFile(options.output, `${JSON.stringify(intent, null, 2)}\n`, "utf8");
+    await writeFile(options.output, `${JSON.stringify(layout, null, 2)}\n`, "utf8");
     console.log(`Generated ${options.output}`);
     return;
   }
@@ -44,7 +45,7 @@ export async function runCliCommand(args: string[]): Promise<void> {
     const options = parseGenerateArgs(args.slice(1));
     const parsed = await parseInput(options.input);
     const intent = options.layout
-      ? await readLayoutIntent(options.layout)
+      ? relativeFlowLayoutToStereotypeLayoutIntent(parsed, await readRelativeFlowLayout(options.layout))
       : options.suggestedLayout
         ? createStereotypeLayoutIntent(parsed, { placement: "suggested" })
         : undefined;
@@ -76,13 +77,13 @@ async function parseInput(inputPath: string): Promise<ReturnType<typeof parseMer
   return parsed;
 }
 
-async function readLayoutIntent(layoutPath: string): Promise<StereotypeLayoutIntent> {
+async function readRelativeFlowLayout(layoutPath: string): Promise<RelativeFlowLayout> {
   try {
     const content = await readFile(layoutPath, "utf8");
-    return normalizeStereotypeLayoutIntent(JSON.parse(content));
+    return JSON.parse(content) as RelativeFlowLayout;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Invalid layout intent ${layoutPath}: ${message}`);
+    throw new Error(`Invalid layout file ${layoutPath}: ${message}`);
   }
 }
 

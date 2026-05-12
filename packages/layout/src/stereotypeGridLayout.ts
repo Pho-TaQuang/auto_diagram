@@ -9,7 +9,9 @@ import type {
   DiagramLayoutScore,
   DiagramNode,
   DiagramNodeLayout,
-  DiagramPoint
+  DiagramPoint,
+  DiagramRoutingDivider,
+  DiagramRoutingDividerOrientation
 } from "../../core/src/index.js";
 import { estimateClassNodeLayout } from "./mvp0GridLayout.js";
 
@@ -40,13 +42,16 @@ const syntheticUngroupedLabel = "Ungrouped";
 const defaultGroupColumns = 3;
 const pageMarginX = 40;
 const pageMarginY = 40;
-const groupGapX = 120;
-const groupGapY = 160;
+const groupGapX = 60;
+const groupGapY = 60;
 const groupPadding = 32;
 const nodeGapX = 80;
 const nodeGapY = 80;
 const waypointMargin = 16;
 const anchorStubDistance = 24;
+const denseRoutingDividerThreshold = 4;
+const routingDividerThickness = 10;
+const routingDividerMinLength = 48;
 const defaultCandidateLimit = 100;
 const lockedGroupCandidateLimit = 220;
 const lockedGroupAnchorOrderVariantLimit = 32;
@@ -229,6 +234,17 @@ type ResolvedRoutingOptions = {
   anchorOrderVariantLimit: number;
 };
 
+type DenseRoutingDividerCandidate = {
+  mode: DiagramRoutingDivider["mode"];
+  side: DiagramEdgeAnchorSide;
+  endpoint: DiagramNode;
+  otherNodes: DiagramNode[];
+  endpointGroup?: DiagramGroup;
+  otherGroups: DiagramGroup[];
+  edges: DiagramEdge[];
+  clusterKey: string;
+};
+
 export function createStereotypeLayoutIntent(
   document: DiagramDocument,
   options: CreateStereotypeLayoutIntentOptions = {}
@@ -329,12 +345,19 @@ export function applyStereotypeGridLayout(
     ? best.edges
     : refineRoutedEdgeAnchors(best.edges, best.nodes, best.groups);
   const refinedScore = scoreLayout(refinedEdges, best.nodes, best.groups);
+  const { dividers: routingDividers, tooComplex } = createDenseRoutingDividers(refinedEdges, best.nodes, best.groups);
+
+  const extraDiagnostics = tooComplex
+    ? [{ severity: "warning" as const, message: "tôi chịu chết đéo thể routing layout được" }]
+    : [];
 
   return {
     ...document,
     nodes: best.nodes,
     edges: refinedEdges,
     groups: best.groups,
+    routingDividers: routingDividers.length > 0 ? routingDividers : undefined,
+    diagnostics: [...document.diagnostics, ...extraDiagnostics],
     layout: {
       engine: "stereotype-scored",
       selectedCandidateId: best.id,
@@ -1423,6 +1446,387 @@ function ratioForPointOnSide(
   }
 
   return (point.y - layout.y) / layout.height;
+}
+
+function createDenseRoutingDividers(
+  edges: DiagramEdge[],
+  nodes: DiagramNode[],
+  groups: DiagramGroup[]
+): { dividers: DiagramRoutingDivider[]; tooComplex: boolean } {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const candidates = denseRoutingDividerCandidates(edges, nodeById, groupById);
+  const usedEdgeIds = new Set<string>();
+  const usedSidesByCluster = new Map<string, Set<DiagramEdgeAnchorSide>>();
+  const dividers: DiagramRoutingDivider[] = [];
+
+  for (const candidate of candidates) {
+    if (candidate.edges.some((edge) => usedEdgeIds.has(edge.id))) {
+      continue;
+    }
+
+    const usedSides = usedSidesByCluster.get(candidate.clusterKey) ?? new Set<DiagramEdgeAnchorSide>();
+    const divider = materializeDenseRoutingDivider(candidate, nodes, dividers.length, usedSides);
+    if (!divider) {
+      continue;
+    }
+
+    dividers.push(divider);
+    candidate.edges.forEach((edge) => usedEdgeIds.add(edge.id));
+    usedSides.add(divider.side);
+    usedSidesByCluster.set(candidate.clusterKey, usedSides);
+  }
+
+  // tooComplex = any single cluster ends up with more than 2 dividers.
+  // Multiple dividers across *different* clusters is acceptable.
+  const tooComplex = [...usedSidesByCluster.values()].some((sides) => sides.size > 2);
+  return { dividers, tooComplex };
+}
+
+function denseRoutingDividerCandidates(
+  edges: DiagramEdge[],
+  nodeById: Map<string, DiagramNode>,
+  groupById: Map<string, DiagramGroup>
+): DenseRoutingDividerCandidate[] {
+  const fanOutBuckets = new Map<string, EdgeEndpointReference[]>();
+  const fanInBuckets = new Map<string, EdgeEndpointReference[]>();
+
+  for (const edge of edges) {
+    const sourceNode = nodeById.get(edge.sourceId);
+    const targetNode = nodeById.get(edge.targetId);
+
+    if (!sourceNode || !targetNode) {
+      continue;
+    }
+
+    const sourceGroup = sourceNode.groupId ? groupById.get(sourceNode.groupId) : undefined;
+    const targetGroup = targetNode.groupId ? groupById.get(targetNode.groupId) : undefined;
+
+    // Use standard bucket key for routing
+    addEndpointReference(fanOutBuckets, {
+      edge,
+      role: "source",
+      node: sourceNode,
+      otherNode: targetNode,
+      nodeGroup: sourceGroup,
+      otherGroup: targetGroup,
+      side: chooseEndpointSide("source", sourceNode, targetNode, sourceGroup, targetGroup)
+    });
+    addEndpointReference(fanInBuckets, {
+      edge,
+      role: "target",
+      node: targetNode,
+      otherNode: sourceNode,
+      nodeGroup: targetGroup,
+      otherGroup: sourceGroup,
+      side: chooseEndpointSide("target", targetNode, sourceNode, targetGroup, sourceGroup)
+    });
+  }
+
+  return [
+    ...denseDividerCandidatesFromBuckets("fanOut", fanOutBuckets),
+    ...denseDividerCandidatesFromBuckets("fanIn", fanInBuckets)
+  ].sort((left, right) =>
+    right.edges.length - left.edges.length ||
+    dividerModeSortValue(left.mode) - dividerModeSortValue(right.mode) ||
+    left.endpoint.id.localeCompare(right.endpoint.id) ||
+    left.side.localeCompare(right.side)
+  );
+}
+
+function denseDividerCandidatesFromBuckets(
+  mode: DiagramRoutingDivider["mode"],
+  buckets: Map<string, EdgeEndpointReference[]>
+): DenseRoutingDividerCandidate[] {
+  const candidates: DenseRoutingDividerCandidate[] = [];
+
+  for (const endpoints of buckets.values()) {
+    // Split the bucket by otherGroup.id to ensure dividers only cluster nodes from the same group
+    const grouped = new Map<string | undefined, EdgeEndpointReference[]>();
+    for (const ep of endpoints) {
+      const key = ep.otherGroup?.id;
+      const list = grouped.get(key) ?? [];
+      list.push(ep);
+      grouped.set(key, list);
+    }
+
+    for (const clusterEndpoints of grouped.values()) {
+      if (clusterEndpoints.length >= denseRoutingDividerThreshold) {
+        const first = clusterEndpoints[0];
+        candidates.push({
+          mode,
+          side: first.side,
+          endpoint: first.node,
+          endpointGroup: first.nodeGroup,
+          otherNodes: clusterEndpoints.map((ep) => ep.otherNode),
+          otherGroups: uniqueGroups(clusterEndpoints.flatMap((ep) => ep.otherGroup ? [ep.otherGroup] : [])),
+          edges: clusterEndpoints.map((ep) => ep.edge),
+          clusterKey: dividerClusterKey(clusterEndpoints)
+        });
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function materializeDenseRoutingDivider(
+  candidate: DenseRoutingDividerCandidate,
+  nodes: DiagramNode[],
+  index: number,
+  usedSides: Set<DiagramEdgeAnchorSide>
+): DiagramRoutingDivider | undefined {
+  const endpointBounds = candidate.endpointGroup?.layout ?? requireLayout(candidate.endpoint);
+  const clusterBounds = boundsForDividerCluster(candidate.otherNodes, candidate.otherGroups);
+  if (!clusterBounds) {
+    return undefined;
+  }
+
+  // Constrain allowed sides based on the packing direction of the endpoint group.
+  // horizontal-packed group → divider above/below (north/south)
+  // vertical-packed group   → divider left/right  (west/east)
+  const packing = candidate.endpointGroup?.layoutIntent?.packing;
+  const allowedSides: DiagramEdgeAnchorSide[] | undefined =
+    packing === "horizontal" ? ["north", "south"] :
+    packing === "vertical"   ? ["west", "east"]   :
+    undefined;
+
+  const side = chooseDividerClusterSide(endpointBounds, clusterBounds, usedSides, allowedSides);
+  const orientation = dividerOrientationForClusterSide(side);
+  const initialLayout = placeDividerOnClusterSide(side, orientation, clusterBounds, candidate.otherNodes);
+  const layout = moveDividerOutOfNodes(initialLayout, nodes.map((node) => requireLayout(node)), side);
+
+  return {
+    id: `routing_divider_${index + 1}_${candidate.mode}_${candidate.endpoint.id}_${side}`,
+    orientation,
+    side,
+    sourceEdgeIds: candidate.edges.map((edge) => edge.id),
+    mode: candidate.mode,
+    layout
+  };
+}
+
+function dividerClusterKey(endpoints: EdgeEndpointReference[]): string {
+  const groupIds = uniqueStrings(endpoints.flatMap((endpoint) => endpoint.otherGroup ? [endpoint.otherGroup.id] : []));
+  if (groupIds.length > 0) {
+    return `groups:${groupIds.sort().join(",")}`;
+  }
+
+  return `nodes:${uniqueStrings(endpoints.map((endpoint) => endpoint.otherNode.id)).sort().join(",")}`;
+}
+
+function dividerModeSortValue(mode: DiagramRoutingDivider["mode"]): number {
+  return mode === "fanOut" ? 0 : 1;
+}
+
+function uniqueGroups(groups: DiagramGroup[]): DiagramGroup[] {
+  const unique: DiagramGroup[] = [];
+  const seen = new Set<string>();
+
+  for (const group of groups) {
+    if (seen.has(group.id)) {
+      continue;
+    }
+
+    seen.add(group.id);
+    unique.push(group);
+  }
+
+  return unique;
+}
+
+function boundsForDividerCluster(nodes: DiagramNode[], groups: DiagramGroup[]): { x: number; y: number; width: number; height: number } | undefined {
+  const rectangles = groups.length > 0
+    ? groups.map((group) => requireGroupLayout(group))
+    : nodes.map((node) => requireLayout(node));
+
+  if (rectangles.length === 0) {
+    return undefined;
+  }
+
+  return rectangleBounds(rectangles);
+}
+
+function chooseDividerClusterSide(
+  endpointBounds: { x: number; y: number; width: number; height: number },
+  clusterBounds: { x: number; y: number; width: number; height: number },
+  usedSides: Set<DiagramEdgeAnchorSide>,
+  allowedSides?: DiagramEdgeAnchorSide[]
+): DiagramEdgeAnchorSide {
+  const endpointCenter = centerOf(endpointBounds);
+  const clusterCenter = centerOf(clusterBounds);
+  // Apply packing constraint; fall back to all four sides if nothing allowed matches.
+  const pool: DiagramEdgeAnchorSide[] = allowedSides && allowedSides.length > 0
+    ? allowedSides
+    : ["north", "east", "south", "west"];
+  const scored = pool
+    .map((side) => ({
+      side,
+      score: distance(endpointCenter, clusterSideCenter(clusterBounds, side)),
+      used: usedSides.has(side)
+    }))
+    .sort((left, right) =>
+      Number(left.used) - Number(right.used) ||
+      left.score - right.score ||
+      sideTieBreakValue(left.side, clusterCenter, endpointCenter) - sideTieBreakValue(right.side, clusterCenter, endpointCenter)
+    );
+
+  return scored[0].side;
+}
+
+function dividerOrientationForClusterSide(side: DiagramEdgeAnchorSide): DiagramRoutingDividerOrientation {
+  if (side === "east" || side === "west") {
+    return "vertical";
+  }
+
+  return "horizontal";
+}
+
+function placeDividerOnClusterSide(
+  side: DiagramEdgeAnchorSide,
+  orientation: DiagramRoutingDividerOrientation,
+  clusterBounds: { x: number; y: number; width: number; height: number },
+  otherNodes: DiagramNode[]
+): DiagramRoutingDivider["layout"] {
+  const otherNodeCenters = otherNodes.map((node) => centerOf(requireLayout(node)));
+  const offset = anchorStubDistance + waypointMargin;
+
+  if (orientation === "vertical") {
+    const spread = rangeForDivider(otherNodeCenters.map((point) => point.y), clusterBounds.y, clusterBounds.y + clusterBounds.height);
+    const height = Math.max(routingDividerMinLength, spread.max - spread.min + anchorStubDistance * 2);
+    const x = side === "west"
+      ? clusterBounds.x - offset - routingDividerThickness
+      : clusterBounds.x + clusterBounds.width + offset;
+
+    return {
+      x,
+      y: (spread.min + spread.max) / 2 - height / 2,
+      width: routingDividerThickness,
+      height
+    };
+  }
+
+  const spread = rangeForDivider(otherNodeCenters.map((point) => point.x), clusterBounds.x, clusterBounds.x + clusterBounds.width);
+  const width = Math.max(routingDividerMinLength, spread.max - spread.min + anchorStubDistance * 2);
+  const y = side === "north"
+    ? clusterBounds.y - offset - routingDividerThickness
+    : clusterBounds.y + clusterBounds.height + offset;
+
+  return {
+    x: (spread.min + spread.max) / 2 - width / 2,
+    y,
+    width,
+    height: routingDividerThickness
+  };
+}
+
+function rangeForDivider(values: number[], fallbackA: number, fallbackB: number): { min: number; max: number } {
+  const candidates = values.length > 0 ? values : [fallbackA, fallbackB];
+  return {
+    min: Math.min(...candidates),
+    max: Math.max(...candidates)
+  };
+}
+
+function moveDividerOutOfNodes(
+  layout: DiagramRoutingDivider["layout"],
+  nodeBounds: DiagramNodeLayout[],
+  side: DiagramEdgeAnchorSide
+): DiagramRoutingDivider["layout"] {
+  if (!nodeBounds.some((bounds) => rectanglesOverlap(layout, bounds))) {
+    return layout;
+  }
+
+  const attempts = [1, -1, 2, -2, 3, -3, 4, -4];
+  const outward = outwardDividerMove(side);
+
+  for (const attempt of [1, 2, 3, 4, 5, 6]) {
+    const moved = {
+      ...layout,
+      x: layout.x + outward.x * attempt * (routingDividerMinLength + waypointMargin),
+      y: layout.y + outward.y * attempt * (routingDividerMinLength + waypointMargin)
+    };
+
+    if (!nodeBounds.some((bounds) => rectanglesOverlap(moved, bounds))) {
+      return moved;
+    }
+  }
+
+  const slideAxis = side === "north" || side === "south" ? "x" : "y";
+
+  for (const attempt of attempts) {
+    const moved = slideAxis === "y"
+      ? { ...layout, y: layout.y + attempt * (routingDividerMinLength + waypointMargin) }
+      : { ...layout, x: layout.x + attempt * (routingDividerMinLength + waypointMargin) };
+
+    if (!nodeBounds.some((bounds) => rectanglesOverlap(moved, bounds))) {
+      return moved;
+    }
+  }
+
+  return layout;
+}
+
+function clusterSideCenter(
+  rectangle: { x: number; y: number; width: number; height: number },
+  side: DiagramEdgeAnchorSide
+): DiagramPoint {
+  if (side === "north") {
+    return { x: rectangle.x + rectangle.width / 2, y: rectangle.y };
+  }
+
+  if (side === "south") {
+    return { x: rectangle.x + rectangle.width / 2, y: rectangle.y + rectangle.height };
+  }
+
+  if (side === "west") {
+    return { x: rectangle.x, y: rectangle.y + rectangle.height / 2 };
+  }
+
+  return { x: rectangle.x + rectangle.width, y: rectangle.y + rectangle.height / 2 };
+}
+
+function sideTieBreakValue(side: DiagramEdgeAnchorSide, clusterCenter: DiagramPoint, endpointCenter: DiagramPoint): number {
+  const preferred = sideToward(clusterCenter, endpointCenter);
+  if (side === preferred) {
+    return 0;
+  }
+
+  return side === "north" ? 1 : side === "east" ? 2 : side === "south" ? 3 : 4;
+}
+
+function distance(left: DiagramPoint, right: DiagramPoint): number {
+  return Math.abs(left.x - right.x) + Math.abs(left.y - right.y);
+}
+
+function outwardDividerMove(side: DiagramEdgeAnchorSide): DiagramPoint {
+  if (side === "north") {
+    return { x: 0, y: -1 };
+  }
+
+  if (side === "south") {
+    return { x: 0, y: 1 };
+  }
+
+  if (side === "west") {
+    return { x: -1, y: 0 };
+  }
+
+  return { x: 1, y: 0 };
+}
+
+function rectangleBounds(rectangles: Array<{ x: number; y: number; width: number; height: number }>): { x: number; y: number; width: number; height: number } {
+  const minX = Math.min(...rectangles.map((rectangle) => rectangle.x));
+  const minY = Math.min(...rectangles.map((rectangle) => rectangle.y));
+  const maxX = Math.max(...rectangles.map((rectangle) => rectangle.x + rectangle.width));
+  const maxY = Math.max(...rectangles.map((rectangle) => rectangle.y + rectangle.height));
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY
+  };
 }
 
 function orderEdgesForRouting(
@@ -2873,13 +3277,17 @@ function calculateNodeDegrees(nodes: DiagramNode[], edges: DiagramEdge[]): Map<s
 }
 
 function packingForGroup(group: DiagramGroup): DiagramGroupPacking {
-  if (group.kind === "synthetic") {
-    return "compactGrid";
+  if (group.kind === 'synthetic') {
+    // Tạm bỏ compact grid (để horizontal và vertical thôi)
+    // return 'compactGrid';
+    return 'vertical';
   }
 
-  return group.label === "Model" || group.label === "DTO" || group.label === "LLBLGenEntity"
-    ? "compactGrid"
-    : "vertical";
+  // Tạm bỏ compact grid (để horizontal và vertical thôi)
+  // return group.label === 'Model' || group.label === 'DTO' || group.label === 'LLBLGenEntity'
+  //   ? 'compactGrid'
+  //   : 'vertical';
+  return 'vertical';
 }
 
 function createUniqueGroupId(kind: DiagramGroup["kind"], label: string, usedIds: Set<string>): string {

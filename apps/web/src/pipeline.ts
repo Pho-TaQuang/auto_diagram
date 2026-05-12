@@ -7,6 +7,7 @@ import {
   type MxAnchor,
   type MxGraphModel,
   type MxLayoutClass,
+  type MxLayoutDivider,
   type MxLayoutEdge,
   type MxLayoutGroup,
   type MxPoint,
@@ -158,7 +159,7 @@ const scoreWeights = {
 
 function scoreMxLayoutView(layoutView: MxLayoutViewModel): DiagramLayoutScore {
   const edgePaths = layoutView.edges
-    .map((edge) => edgePath(edge, layoutView.classes))
+    .map((edge) => edgePath(edge, layoutView.classes, layoutView.dividers))
     .filter((path): path is { edge: MxLayoutEdge; points: MxPoint[] } => Boolean(path));
   const nodeOverlaps = countRectangleOverlaps(layoutView.classes);
   const groupOverlaps = countRectangleOverlaps(layoutView.groups);
@@ -200,9 +201,12 @@ function scoreMxLayoutView(layoutView: MxLayoutViewModel): DiagramLayoutScore {
   };
 }
 
-function edgePath(edge: MxLayoutEdge, classes: MxLayoutClass[]): { edge: MxLayoutEdge; points: MxPoint[] } | undefined {
-  const source = classes.find((classCell) => classCell.id === edge.sourceId);
-  const target = classes.find((classCell) => classCell.id === edge.targetId);
+type MxLayoutEndpoint = MxLayoutClass | MxLayoutDivider;
+
+function edgePath(edge: MxLayoutEdge, classes: MxLayoutClass[], dividers: MxLayoutDivider[]): { edge: MxLayoutEdge; points: MxPoint[] } | undefined {
+  const endpoints: MxLayoutEndpoint[] = [...classes, ...dividers];
+  const source = endpoints.find((endpoint) => endpoint.id === edge.sourceId);
+  const target = endpoints.find((endpoint) => endpoint.id === edge.targetId);
   if (!source || !target) {
     return undefined;
   }
@@ -217,7 +221,7 @@ function edgePath(edge: MxLayoutEdge, classes: MxLayoutClass[]): { edge: MxLayou
   };
 }
 
-function anchorPoint(classCell: MxLayoutClass, anchor: MxAnchor | undefined): MxPoint {
+function anchorPoint(classCell: MxLayoutEndpoint, anchor: MxAnchor | undefined): MxPoint {
   if (!anchor) {
     return {
       x: classCell.x + classCell.width / 2,

@@ -2,20 +2,24 @@ import { runCliTests } from "./cli.test.js";
 import { runDrawioExporterTests } from "../packages/drawio/src/mxGraphExporter.test.js";
 import { runMxGraphModelTests } from "../packages/drawio/src/mxGraphModel.test.js";
 import { runLayoutTests } from "../packages/layout/src/mvp0GridLayout.test.js";
+import { runRelativeFlowLayoutTests } from "../packages/layout/src/relativeFlowLayout.test.js";
 import { runStereotypeGridLayoutTests } from "../packages/layout/src/stereotypeGridLayout.test.js";
 import { runParserTests } from "../packages/parsers/src/mermaidClassDiagram.test.js";
 import { runStructuralTests } from "./mvp0.structural.test.js";
 import { runWebPipelineTests } from "../apps/web/src/pipeline.test.js";
+import { runQlskDividerTests } from "./qlsk-divider.test.js";
 
 const tests: Array<[string, () => void | Promise<void>]> = [
   ["parser", runParserTests],
   ["layout", runLayoutTests],
+  ["relative flow layout", runRelativeFlowLayoutTests],
   ["stereotype grid layout", runStereotypeGridLayoutTests],
   ["drawio exporter", runDrawioExporterTests],
   ["mxGraph model", runMxGraphModelTests],
   ["web pipeline", runWebPipelineTests],
   ["cli", runCliTests],
-  ["structural baseline", runStructuralTests]
+  ["structural baseline", runStructuralTests],
+  ["qlsk divider clusters", runQlskDividerTests]
 ];
 
 let passed = 0;

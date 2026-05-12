@@ -32,6 +32,7 @@ import {
   type MxGraphCell,
   type MxGraphModel,
   type MxLayoutClass,
+  type MxLayoutDivider,
   type MxLayoutEdge,
   type MxLayoutGroup,
   type MxLayoutViewModel,
@@ -962,6 +963,7 @@ function DiagramPreview(props: {
   const edgeHitStrokeWidth = clamp(22 / zoom, 12, 80);
   const displayClasses = applyClassDragPreview(props.layoutView.classes, drag);
   const displayEdges = applySegmentDragPreview(props.layoutView.edges, drag);
+  const displayEndpoints: MxLayoutEndpoint[] = [...displayClasses, ...props.layoutView.dividers];
   const dragCoordinate = dragCoordinateLabel(drag);
 
   useEffect(() => {
@@ -1098,7 +1100,7 @@ function DiagramPreview(props: {
       }
       setDrag({
         ...drag,
-        currentWaypoints: moveEdgeSegment({ ...edge, waypoints: drag.baseWaypoints }, props.layoutView.classes, drag.segmentIndex, point, drag.direct)
+        currentWaypoints: moveEdgeSegment({ ...edge, waypoints: drag.baseWaypoints }, [...props.layoutView.classes, ...props.layoutView.dividers], drag.segmentIndex, point, drag.direct)
       });
       return;
     }
@@ -1290,7 +1292,7 @@ function DiagramPreview(props: {
           <PreviewEdge
             key={edge.id}
             edge={edge}
-            classes={displayClasses}
+            endpoints={displayEndpoints}
             selected={isSelectionItemSelected(props.selection, { type: "edge", id: edge.id })}
             hitStrokeWidth={edgeHitStrokeWidth}
             terminalPreview={drag?.kind === "terminal" && drag.edgeId === edge.id ? drag : undefined}
@@ -1305,6 +1307,9 @@ function DiagramPreview(props: {
             onSegmentPointerDown={beginSegmentDrag}
             onTerminalPointerDown={beginTerminalDrag}
           />
+        ))}
+        {props.layoutView.dividers.map((divider) => (
+          <PreviewDivider key={divider.id} divider={divider} />
         ))}
         {displayClasses.map((classCell) => (
           <PreviewClass
@@ -1489,7 +1494,7 @@ function childGeometryNumber(cell: MxGraphCell, key: "y" | "height", fallback: n
 
 function PreviewEdge(props: {
   edge: MxLayoutEdge;
-  classes: MxLayoutClass[];
+  endpoints: MxLayoutEndpoint[];
   selected: boolean;
   hitStrokeWidth: number;
   terminalPreview?: Extract<CanvasDrag, { kind: "terminal" }>;
@@ -1497,8 +1502,8 @@ function PreviewEdge(props: {
   onSegmentPointerDown: (event: PointerEvent<SVGCircleElement>, edge: MxLayoutEdge, segmentIndex: number) => void;
   onTerminalPointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string, terminal: "source" | "target") => void;
 }): React.JSX.Element | null {
-  const source = props.classes.find((classCell) => classCell.id === props.edge.sourceId);
-  const target = props.classes.find((classCell) => classCell.id === props.edge.targetId);
+  const source = props.endpoints.find((endpoint) => endpoint.id === props.edge.sourceId);
+  const target = props.endpoints.find((endpoint) => endpoint.id === props.edge.targetId);
 
   if (!source || !target) {
     return null;
@@ -1523,8 +1528,8 @@ function PreviewEdge(props: {
       {props.edge.label ? <text x={middle.x + 6} y={middle.y - 6}>{props.edge.label}</text> : null}
       {props.selected ? (
         <>
-          <circle className="terminal-handle source" cx={points[0].x} cy={points[0].y} r="7" onPointerDown={(event) => props.onTerminalPointerDown(event, props.edge.id, "source")} />
-          <circle className="terminal-handle target" cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="7" onPointerDown={(event) => props.onTerminalPointerDown(event, props.edge.id, "target")} />
+          {isClassEndpoint(source) ? <circle className="terminal-handle source" cx={points[0].x} cy={points[0].y} r="7" onPointerDown={(event) => props.onTerminalPointerDown(event, props.edge.id, "source")} /> : null}
+          {isClassEndpoint(target) ? <circle className="terminal-handle target" cx={points[points.length - 1].x} cy={points[points.length - 1].y} r="7" onPointerDown={(event) => props.onTerminalPointerDown(event, props.edge.id, "target")} /> : null}
           {segmentHandles.map((handle) => (
             <g key={`${props.edge.id}-segment-${handle.segmentIndex}`}>
               <circle
@@ -1556,7 +1561,24 @@ function PreviewEdge(props: {
   );
 }
 
-function edgeEndpointPoint(classCell: MxLayoutClass, anchor: MxAnchor | undefined, marker: MxLayoutEdge["markerStart"]): MxPoint {
+function PreviewDivider(props: { divider: MxLayoutDivider }): React.JSX.Element {
+  return (
+    <rect
+      className={`preview-divider ${props.divider.orientation}`}
+      x={props.divider.x}
+      y={props.divider.y}
+      width={props.divider.width}
+      height={props.divider.height}
+      rx="2"
+    />
+  );
+}
+
+function isClassEndpoint(endpoint: MxLayoutEndpoint): endpoint is MxLayoutClass {
+  return "label" in endpoint;
+}
+
+function edgeEndpointPoint(classCell: MxLayoutEndpoint, anchor: MxAnchor | undefined, marker: MxLayoutEdge["markerStart"]): MxPoint {
   const point = anchorPoint(classCell, anchor);
 
   if (!anchor || (marker !== "diamondOpen" && marker !== "diamondFilled")) {
@@ -1615,6 +1637,7 @@ function SummaryPanel(props: { layoutView: MxLayoutViewModel; parsed?: WebPipeli
 }
 
 type EdgeTerminal = "source" | "target";
+type MxLayoutEndpoint = MxLayoutClass | MxLayoutDivider;
 type AnchorEndpoint = {
   edge: MxLayoutEdge;
   terminal: EdgeTerminal;
@@ -1680,9 +1703,10 @@ function normalizeEdgesById(graph: MxGraphModel, edgeIds: Set<string>): MxGraphM
   }
 
   const view = extractLayoutViewModel(graph);
+  const endpoints: MxLayoutEndpoint[] = [...view.classes, ...view.dividers];
   return view.edges
     .filter((edge) => edgeIds.has(edge.id))
-    .reduce((next, edge) => updateEdgeRoute(next, edge.id, { waypoints: orthogonalizeWaypoints(edge, view.classes) }), graph);
+    .reduce((next, edge) => updateEdgeRoute(next, edge.id, { waypoints: orthogonalizeWaypoints(edge, endpoints) }), graph);
 }
 
 function rerouteEdgesById(graph: MxGraphModel, edgeIds: Set<string>): MxGraphModel {
@@ -1691,9 +1715,10 @@ function rerouteEdgesById(graph: MxGraphModel, edgeIds: Set<string>): MxGraphMod
   }
 
   const view = extractLayoutViewModel(graph);
+  const endpoints: MxLayoutEndpoint[] = [...view.classes, ...view.dividers];
   return view.edges
     .filter((edge) => edgeIds.has(edge.id))
-    .reduce((next, edge) => updateEdgeRoute(next, edge.id, { waypoints: orthogonalizeWaypoints(edge, view.classes, []) }), graph);
+    .reduce((next, edge) => updateEdgeRoute(next, edge.id, { waypoints: orthogonalizeWaypoints(edge, endpoints, []) }), graph);
 }
 
 function reorderAnchorsOnSide(
@@ -1793,13 +1818,13 @@ function buildSegmentHandles(points: MxPoint[]): Array<MxPoint & { segmentIndex:
 
 function moveEdgeSegment(
   edge: MxLayoutEdge,
-  classes: MxLayoutClass[],
+  endpoints: MxLayoutEndpoint[],
   segmentIndex: number,
   point: MxPoint,
   forceDirect = false
 ): MxPoint[] {
-  const source = classes.find((classCell) => classCell.id === edge.sourceId);
-  const target = classes.find((classCell) => classCell.id === edge.targetId);
+  const source = endpoints.find((endpoint) => endpoint.id === edge.sourceId);
+  const target = endpoints.find((endpoint) => endpoint.id === edge.targetId);
   if (!source || !target) {
     return edge.waypoints;
   }
@@ -1817,14 +1842,14 @@ function moveEdgeSegment(
   if (forceDirect || edge.waypoints.length === 0) {
     if (Math.abs(start.x - end.x) >= Math.abs(start.y - end.y)) {
       const x = snap(point.x);
-      return orthogonalizeWaypoints(edge, classes, [
+      return orthogonalizeWaypoints(edge, endpoints, [
         { x, y: sourcePoint.y },
         { x, y: targetPoint.y }
       ]);
     }
 
     const y = snap(point.y);
-    return orthogonalizeWaypoints(edge, classes, [
+    return orthogonalizeWaypoints(edge, endpoints, [
       { x: sourcePoint.x, y },
       { x: targetPoint.x, y }
     ]);
@@ -1865,12 +1890,12 @@ function moveEdgeSegment(
     }
   }
 
-  return orthogonalizeWaypoints(edge, classes, next);
+  return orthogonalizeWaypoints(edge, endpoints, next);
 }
 
-function orthogonalizeWaypoints(edge: MxLayoutEdge, classes: MxLayoutClass[], waypoints = edge.waypoints): MxPoint[] {
-  const source = classes.find((classCell) => classCell.id === edge.sourceId);
-  const target = classes.find((classCell) => classCell.id === edge.targetId);
+function orthogonalizeWaypoints(edge: MxLayoutEdge, endpoints: MxLayoutEndpoint[], waypoints = edge.waypoints): MxPoint[] {
+  const source = endpoints.find((endpoint) => endpoint.id === edge.sourceId);
+  const target = endpoints.find((endpoint) => endpoint.id === edge.targetId);
   if (!source || !target) {
     return compactWaypoints(waypoints);
   }
@@ -2144,14 +2169,14 @@ function selectByMarquee(layoutView: MxLayoutViewModel, rect: { x: number; y: nu
         .map((group): SelectionItem => ({ type: "group", id: group.id }))
       : []),
     ...layoutView.edges
-      .filter((edge) => edgeIntersectsRect(edge, layoutView.classes, rect))
+      .filter((edge) => edgeIntersectsRect(edge, [...layoutView.classes, ...layoutView.dividers], rect))
       .map((edge): SelectionItem => ({ type: "edge", id: edge.id }))
   ]);
 }
 
-function edgeIntersectsRect(edge: MxLayoutEdge, classes: MxLayoutClass[], rect: { x: number; y: number; width: number; height: number }): boolean {
-  const source = classes.find((classCell) => classCell.id === edge.sourceId);
-  const target = classes.find((classCell) => classCell.id === edge.targetId);
+function edgeIntersectsRect(edge: MxLayoutEdge, endpoints: MxLayoutEndpoint[], rect: { x: number; y: number; width: number; height: number }): boolean {
+  const source = endpoints.find((endpoint) => endpoint.id === edge.sourceId);
+  const target = endpoints.find((endpoint) => endpoint.id === edge.targetId);
   if (!source || !target) {
     return false;
   }
@@ -3293,7 +3318,7 @@ function ReadOnlyField(props: { label: string; value: number }): React.JSX.Eleme
   );
 }
 
-function anchorPoint(classCell: MxLayoutClass, anchor: MxAnchor | undefined): MxPoint {
+function anchorPoint(classCell: MxLayoutEndpoint, anchor: MxAnchor | undefined): MxPoint {
   if (!anchor) {
     return {
       x: classCell.x + classCell.width / 2,
@@ -3319,9 +3344,10 @@ function anchorPoint(classCell: MxLayoutClass, anchor: MxAnchor | undefined): Mx
 function renderSvgMarkup(layoutView: MxLayoutViewModel, showGroupFrames: boolean): string {
   const body = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${layoutView.bounds.width} ${layoutView.bounds.height}">`,
-    '<style>text{font-family:Arial,sans-serif;font-size:12px}.c{fill:#fff;stroke:#333}.g{fill:none;stroke:#999;stroke-dasharray:8 6}.e{fill:none;stroke:#555}</style>',
+    '<style>text{font-family:Arial,sans-serif;font-size:12px}.c{fill:#fff;stroke:#333}.g{fill:none;stroke:#999;stroke-dasharray:8 6}.e{fill:none;stroke:#555}.d{fill:#666;stroke:#666}</style>',
     ...(showGroupFrames ? layoutView.groups.map((group) => `<rect class="g" x="${group.x - 18}" y="${group.y - 26}" width="${group.width + 36}" height="${group.height + 44}" />`) : []),
-    ...layoutView.edges.map((edge) => renderSvgEdge(edge, layoutView.classes)),
+    ...layoutView.edges.map((edge) => renderSvgEdge(edge, [...layoutView.classes, ...layoutView.dividers])),
+    ...layoutView.dividers.map((divider) => `<rect class="d" x="${divider.x}" y="${divider.y}" width="${divider.width}" height="${divider.height}" />`),
     ...layoutView.classes.map(renderSvgClass),
     "</svg>"
   ];
@@ -3360,9 +3386,9 @@ function renderSvgClassMember(classCell: MxLayoutClass, child: MxGraphCell): str
   return `<text x="${classCell.x + 8}" y="${classCell.y + baseline}">${escapeHtml(child.attributes.value ?? "")}</text>`;
 }
 
-function renderSvgEdge(edge: MxLayoutEdge, classes: MxLayoutClass[]): string {
-  const source = classes.find((classCell) => classCell.id === edge.sourceId);
-  const target = classes.find((classCell) => classCell.id === edge.targetId);
+function renderSvgEdge(edge: MxLayoutEdge, endpoints: MxLayoutEndpoint[]): string {
+  const source = endpoints.find((endpoint) => endpoint.id === edge.sourceId);
+  const target = endpoints.find((endpoint) => endpoint.id === edge.targetId);
   if (!source || !target) {
     return "";
   }
@@ -3393,6 +3419,14 @@ function toLayoutJson(xml: string, layoutView: MxLayoutViewModel): unknown {
       sourceAnchor: edge.sourceAnchor,
       targetAnchor: edge.targetAnchor,
       points: edge.waypoints
+    })),
+    dividers: layoutView.dividers.map((divider) => ({
+      id: divider.id,
+      orientation: divider.orientation,
+      x: divider.x,
+      y: divider.y,
+      width: divider.width,
+      height: divider.height
     })),
     groups: layoutView.groups.map((group) => ({
       id: group.id,

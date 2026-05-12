@@ -89,6 +89,8 @@ Draw.io export writes routed control points directly under `<Array as="points">`
 
 Relationship endpoints stay in the same left-to-right order as the Mermaid input. Arrowheads, inheritance triangles, and aggregation/composition diamonds are selected during draw.io export from the parsed Mermaid operator, so an operator such as `A --* B` affects the visual marker side without reversing the layout source and target.
 
+Dense fan-out and fan-in routes can be rendered through small layout-only routing dividers when at least four relationships compete for the same endpoint direction. For fan-out, the target groups or target nodes are treated as one cluster rectangle; for fan-in, the source groups or source nodes are treated as one cluster rectangle. Dividers are placed on a side of that rectangle, choose vertical or horizontal bus orientation from the selected side, and avoid reusing a side when another divider already belongs to the same cluster. Exported draw.io output contains the divider as a small connectable vertex and splits the visual connector into class-to-divider and divider-to-class segments without changing the semantic Mermaid relationships.
+
 Group frames are hidden by default. To include them as background visuals:
 
 ```bash

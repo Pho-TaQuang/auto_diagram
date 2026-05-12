@@ -107,6 +107,12 @@ export type GroupLayoutIntent = {
 
 export type DiagramGroupLayout = DiagramPoint & DiagramSize;
 
+export type DiagramRoutingDividerOrientation = "vertical" | "horizontal";
+
+export type DiagramRoutingDividerMode = "fanOut" | "fanIn";
+
+export type DiagramRoutingDividerLayout = DiagramPoint & DiagramSize;
+
 export type ClassMember = {
   kind: ClassMemberKind;
   visibility?: Visibility;
@@ -145,12 +151,22 @@ export type DiagramEdge = {
   layout?: DiagramEdgeLayout;
 };
 
+export type DiagramRoutingDivider = {
+  id: string;
+  orientation: DiagramRoutingDividerOrientation;
+  side: DiagramEdgeAnchorSide;
+  sourceEdgeIds: string[];
+  mode: DiagramRoutingDividerMode;
+  layout: DiagramRoutingDividerLayout;
+};
+
 export type DiagramDocument = {
   id: string;
   type: DiagramType;
   nodes: DiagramNode[];
   edges: DiagramEdge[];
   groups?: DiagramGroup[];
+  routingDividers?: DiagramRoutingDivider[];
   layout?: DiagramLayoutState;
   diagnostics: DiagramDiagnostic[];
 };
