@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "layoutMode": "coordinate-routing",
+  "groups": [
+    {
+      "id": "group_stereotype_Controller",
+      "label": "Controller",
+      "x": 25,
+      "y": 50,
+      "packing": "vertical",
+      "nodeOrder": ["SecondController", "FirstController"],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_Model",
+      "label": "Model",
+      "x": 650,
+      "y": 90,
+      "packing": "vertical",
+      "nodeOrder": ["AppModel"],
+      "locked": true
+    }
+  ]
+}

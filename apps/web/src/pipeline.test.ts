@@ -21,7 +21,7 @@ function generatesDrawioXmlFromMermaid(): void {
   assert.equal(result.parsed.nodes.length, 11);
   assert.equal(result.diagram.edges.length, 13);
   assert.equal(result.intent.version, 1);
-  assert.equal(result.intent.grid.columns, result.diagram.layout?.grid.columns);
+  assert.equal(result.intent.grid.columns, result.diagram.layout?.grid?.columns);
   assert.equal(result.diagram.layout?.score.edgeCrossings, 0);
   assert.equal(result.layoutView.classes.length, 11);
   assert.equal(result.layoutView.edges.length, 13);
@@ -33,8 +33,8 @@ function exposesSelectedAutoLayoutIntent(): void {
   const base = runWebPipeline({ source: fixture });
   const rerun = runWebPipeline({ source: fixture, intent: base.intent });
 
-  assert.equal(base.intent.grid.columns, base.diagram.layout?.grid.columns);
-  assert.equal(base.intent.grid.rows, base.diagram.layout?.grid.rows);
+  assert.equal(base.intent.grid.columns, base.diagram.layout?.grid?.columns);
+  assert.equal(base.intent.grid.rows, base.diagram.layout?.grid?.rows);
   assert.equal(rerun.diagram.layout?.score.edgeCrossings, 0);
   assert.deepEqual(
     base.intent.groups.map((group) => [group.id, group.gridX, group.gridY, group.packing]),

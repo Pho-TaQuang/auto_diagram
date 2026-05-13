@@ -1213,3 +1213,22 @@ Decision:
 - Draw.io export renders the divider as a small connectable vertex and splits the visual edges through it.
 - The web mxGraph parser and preview treat divider endpoints as valid layout endpoints but do not count dividers as UML classes.
 ```
+
+---
+
+## 35. Routing V2 Migration Decision
+
+Decision:
+
+```text
+- Routing v2 is route-first: user controls group layout, engine controls routing.
+- Auto layout only runs for initial layout generation or explicit Auto actions.
+- Route-only must preserve group x/y, locked packing, and locked node order.
+- The public routing-v2 layout file uses CoordinateRoutingLayoutV3 with version: 3 and layoutMode: "coordinate-routing".
+- Existing relative-flow v2 and stereotype-grid v1 layout files are migration inputs, not the new canonical format.
+- Layout normalization, fallback routing, repair, and hard validation must emit structured LayoutLogEvent entries; no silent fix policy.
+- Illegal shared edge segments are hard validation failures unless the edges share the same source or the same target.
+- A* is deferred; the first routing-v2 slices use template routing and outer lanes.
+- Web integration must preserve manual mxGraph overrides unless the user explicitly reroutes selected or all generated edges.
+- Legacy stereotype-scored layout remains available until routing v2 is stable enough to become default.
+```

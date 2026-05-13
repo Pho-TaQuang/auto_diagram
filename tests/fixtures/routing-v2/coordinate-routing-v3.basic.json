@@ -1,0 +1,29 @@
+{
+  "version": 3,
+  "layoutMode": "coordinate-routing",
+  "groups": [
+    {
+      "id": "group_stereotype_Controller",
+      "label": "Controller",
+      "x": 40,
+      "y": 80,
+      "packing": "vertical",
+      "nodeOrder": ["AppController"],
+      "locked": true
+    },
+    {
+      "id": "group_stereotype_Model",
+      "label": "Model",
+      "x": 520,
+      "y": 80,
+      "packing": "vertical",
+      "nodeOrder": ["AppModel"],
+      "locked": true
+    }
+  ],
+  "routing": {
+    "dividerThreshold": 4,
+    "outerLaneMargin": 96,
+    "maxRepairPasses": 2
+  }
+}

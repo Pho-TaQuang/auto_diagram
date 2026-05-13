@@ -99,8 +99,8 @@ function createIntentFromSelectedLayout(diagram: DiagramDocument): StereotypeLay
     return createStereotypeLayoutIntent(diagram);
   }
 
-  const columns = diagram.layout?.grid.columns ?? Math.max(1, ...groups.map((group) => group.layoutIntent!.gridX + group.layoutIntent!.gridWidth));
-  const rows = diagram.layout?.grid.rows ?? Math.max(1, ...groups.map((group) => group.layoutIntent!.gridY + group.layoutIntent!.gridHeight));
+  const columns = diagram.layout?.grid?.columns ?? Math.max(1, ...groups.map((group) => group.layoutIntent!.gridX + group.layoutIntent!.gridWidth));
+  const rows = diagram.layout?.grid?.rows ?? Math.max(1, ...groups.map((group) => group.layoutIntent!.gridY + group.layoutIntent!.gridHeight));
 
   return {
     version: 1,

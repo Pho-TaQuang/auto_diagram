@@ -7,9 +7,12 @@ import { runCliCommand } from "../apps/cli/src/index.js";
 
 export async function runCliTests(): Promise<void> {
   await initializesEditableLayoutIntent();
+  await initializesRoutingV2LayoutIntent();
   await initializesSuggestedLayoutIntent();
   await generatesWithoutGroupFramesByDefault();
   await generatesWithLayoutIntent();
+  await generatesWithRoutingV2LayoutAndReport();
+  await convertsRelativeFlowLayoutInRoutingV2();
   await generatesWithSuggestedLayout();
   await rejectsLayoutFileAndSuggestedLayoutTogether();
   await rejectsLegacyLayoutIntentFile();
@@ -29,6 +32,26 @@ async function initializesEditableLayoutIntent(): Promise<void> {
     assert.equal(intent.layoutMode, "relative-flow");
     assert.ok(intent.groups.some((group: any) => group.label === "Controller"));
     assert.ok(assignedNodeIds.includes("DmLoaiLucLuongController"));
+    assert.ok(assignedNodeIds.includes("PageModel"));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function initializesRoutingV2LayoutIntent(): Promise<void> {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "autodiagram-cli-"));
+  try {
+    const intentPath = path.join(tempDir, "demo.routing-v3.json");
+
+    await runCliCommand(["layout:init", "docs/demo_mermaid.md", "-o", intentPath, "--engine", "v2"]);
+
+    const intent = JSON.parse(readFileSync(intentPath, "utf8"));
+    const assignedNodeIds = intent.groups.flatMap((group: any) => group.nodeOrder).sort();
+
+    assert.equal(intent.version, 3);
+    assert.equal(intent.layoutMode, "coordinate-routing");
+    assert.ok(intent.groups.some((group: any) => group.label === "Controller"));
+    assert.ok(assignedNodeIds.includes("DmPhuongTienController"));
     assert.ok(assignedNodeIds.includes("PageModel"));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -79,6 +102,72 @@ async function generatesWithLayoutIntent(): Promise<void> {
     assert.ok(controllerFrame);
     assert.ok(managerFrame);
     assert.ok(Number(controllerFrame.mxGeometry.x) > Number(managerFrame.mxGeometry.x));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function generatesWithRoutingV2LayoutAndReport(): Promise<void> {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "autodiagram-cli-"));
+  try {
+    const intentPath = path.join(tempDir, "demo.routing-v3.json");
+    const drawioPath = path.join(tempDir, "demo-v2.drawio");
+    const reportPath = path.join(tempDir, "demo.report.json");
+
+    await runCliCommand(["layout:init", "docs/demo_mermaid.md", "-o", intentPath, "--engine", "v2"]);
+    await runCliCommand([
+      "generate",
+      "docs/demo_mermaid.md",
+      "-o",
+      drawioPath,
+      "--engine",
+      "v2",
+      "--layout",
+      intentPath,
+      "--log-layout-json",
+      reportPath
+    ]);
+
+    const xml = readFileSync(drawioPath, "utf8");
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+
+    assert.equal(XMLValidator.validate(xml), true);
+    assert.equal(report.engine, "manual-routing-v2");
+    assert.equal(report.sourceFormat, "coordinate-routing-v3");
+    assert.ok(Array.isArray(report.warnings));
+    assert.ok(Array.isArray(report.errors));
+    assert.ok(Array.isArray(report.trace));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function convertsRelativeFlowLayoutInRoutingV2(): Promise<void> {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "autodiagram-cli-"));
+  try {
+    const legacyIntentPath = path.join(tempDir, "demo.layout.json");
+    const drawioPath = path.join(tempDir, "demo-v2-from-relative.drawio");
+    const reportPath = path.join(tempDir, "demo-v2-from-relative.report.json");
+
+    await runCliCommand(["layout:init", "docs/demo_mermaid.md", "-o", legacyIntentPath]);
+    await runCliCommand([
+      "generate",
+      "docs/demo_mermaid.md",
+      "-o",
+      drawioPath,
+      "--engine",
+      "v2",
+      "--layout",
+      legacyIntentPath,
+      "--log-layout-json",
+      reportPath
+    ]);
+
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+
+    assert.equal(XMLValidator.validate(readFileSync(drawioPath, "utf8")), true);
+    assert.equal(report.sourceFormat, "relative-flow-v2");
+    assert.ok(report.warnings.some((event: any) => event.type === "layout-format-converted"));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

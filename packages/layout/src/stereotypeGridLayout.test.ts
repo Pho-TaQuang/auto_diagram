@@ -291,8 +291,8 @@ function storesScoredLayoutMetadata(): void {
   const document = applyStereotypeGridLayout(parseMermaidClassDiagram(demoFixture));
 
   assert.equal(document.layout?.engine, "stereotype-scored");
-  assert.ok(document.layout.selectedCandidateId.length > 0);
-  assert.ok(document.layout.candidatesEvaluated > 1);
+  assert.ok((document.layout.selectedCandidateId ?? "").length > 0);
+  assert.ok((document.layout.candidatesEvaluated ?? 0) > 1);
   assert.ok(Number.isFinite(document.layout.score.value));
   assert.equal(document.layout.score.nodeOverlaps, 0);
   assert.equal(document.layout.score.groupOverlaps, 0);

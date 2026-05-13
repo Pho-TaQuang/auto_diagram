@@ -1503,7 +1503,7 @@ function denseRoutingDividerCandidates(
     const targetGroup = targetNode.groupId ? groupById.get(targetNode.groupId) : undefined;
 
     // Use standard bucket key for routing
-    addEndpointReference(fanOutBuckets, {
+    addDenseEndpointReference(fanOutBuckets, {
       edge,
       role: "source",
       node: sourceNode,
@@ -1512,7 +1512,7 @@ function denseRoutingDividerCandidates(
       otherGroup: targetGroup,
       side: chooseEndpointSide("source", sourceNode, targetNode, sourceGroup, targetGroup)
     });
-    addEndpointReference(fanInBuckets, {
+    addDenseEndpointReference(fanInBuckets, {
       edge,
       role: "target",
       node: targetNode,
@@ -1532,6 +1532,16 @@ function denseRoutingDividerCandidates(
     left.endpoint.id.localeCompare(right.endpoint.id) ||
     left.side.localeCompare(right.side)
   );
+}
+
+function addDenseEndpointReference(
+  endpointBuckets: Map<string, EdgeEndpointReference[]>,
+  endpoint: EdgeEndpointReference
+): void {
+  const key = endpoint.node.id;
+  const bucket = endpointBuckets.get(key) ?? [];
+  bucket.push(endpoint);
+  endpointBuckets.set(key, bucket);
 }
 
 function denseDividerCandidatesFromBuckets(
@@ -1582,10 +1592,15 @@ function materializeDenseRoutingDivider(
     return undefined;
   }
 
-  // Constrain allowed sides based on the packing direction of the endpoint group.
+  // Constrain allowed sides based on the packing direction of the routed cluster
+  // when it is a single logical group. The divider is placed on the cluster side,
+  // so the cluster packing better predicts whether a horizontal or vertical bus
+  // will preserve endpoint identity.
   // horizontal-packed group → divider above/below (north/south)
   // vertical-packed group   → divider left/right  (west/east)
-  const packing = candidate.endpointGroup?.layoutIntent?.packing;
+  const packing = candidate.otherGroups.length === 1
+    ? candidate.otherGroups[0].layoutIntent?.packing
+    : candidate.endpointGroup?.layoutIntent?.packing;
   const allowedSides: DiagramEdgeAnchorSide[] | undefined =
     packing === "horizontal" ? ["north", "south"] :
     packing === "vertical"   ? ["west", "east"]   :

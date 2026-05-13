@@ -80,14 +80,24 @@ export type DiagramLayoutScore = {
   layoutWidth: number;
   layoutHeight: number;
   layoutArea: number;
+  edgeIdentityViolations?: number;
+  invalidSharedSegments?: number;
+  outerLaneUsages?: number;
+  routingFailures?: number;
 };
 
+export type DiagramLayoutEngine =
+  | "stereotype-scored"
+  | "manual-routing-v2"
+  | "suggest-initial-v2"
+  | "auto-arrange-v2";
+
 export type DiagramLayoutState = {
-  engine: "stereotype-scored";
-  selectedCandidateId: string;
-  candidatesEvaluated: number;
+  engine: DiagramLayoutEngine;
   score: DiagramLayoutScore;
-  grid: {
+  selectedCandidateId?: string;
+  candidatesEvaluated?: number;
+  grid?: {
     columns: number;
     rows: number;
   };
@@ -96,6 +106,8 @@ export type DiagramLayoutState = {
 export type DiagramGroupKind = "stereotype" | "synthetic";
 
 export type DiagramGroupPacking = "vertical" | "horizontal" | "compactGrid";
+
+export type DiagramGroupPackingV2 = "vertical" | "horizontal";
 
 export type GroupLayoutIntent = {
   gridX: number;

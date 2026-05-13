@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "layoutMode": "relative-flow",
+  "groups": [
+    {
+      "id": "group_stereotype_Controller",
+      "label": "Controller",
+      "packing": "vertical",
+      "rank": 0,
+      "nodeIds": ["AppController"]
+    },
+    {
+      "id": "group_stereotype_Model",
+      "label": "Model",
+      "packing": "compactGrid",
+      "rank": 1,
+      "placedAfter": "group_stereotype_Controller",
+      "nodeIds": ["AppModel"]
+    }
+  ]
+}

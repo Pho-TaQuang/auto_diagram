@@ -221,6 +221,21 @@ Generate with optional background group frames:
 npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.layout.json --group-frames
 ```
 
+Routing v2 is available as an opt-in migration path. It uses coordinate-based group layout JSON and keeps the legacy engine as the default:
+
+```bash
+npm run layout:init -- docs/demo_mermaid.md -o out/demo.routing-v3.json --engine v2
+npm run generate -- docs/demo_mermaid.md -o out/demo-v2.drawio --engine v2 --layout out/demo.routing-v3.json
+```
+
+Routing v2 can emit structured run reports:
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo-v2.drawio --engine v2 --layout out/demo.routing-v3.json --verbose --log-layout-json out/demo.routing-report.json
+```
+
+Use `--trace-routing` to include debug-level routing events in the console output.
+
 Open `out/demo.drawio` in draw.io / diagrams.net to inspect the result.
 
 ## Known Limits

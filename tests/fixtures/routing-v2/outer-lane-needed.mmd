@@ -1,0 +1,10 @@
+classDiagram
+<<Controller>> OrderController
+<<Manager>> OrderService
+<<DTO>> OrderDTO
+<<DTO>> OrderSummaryDTO
+<<DTO>> OrderAuditDTO
+OrderController --> OrderDTO : view
+OrderController --> OrderSummaryDTO : summary
+OrderService --> OrderDTO : write
+OrderService --> OrderAuditDTO : audit

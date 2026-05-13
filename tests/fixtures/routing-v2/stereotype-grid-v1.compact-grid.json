@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "grid": {
+    "columns": 2,
+    "rows": 1
+  },
+  "groups": [
+    {
+      "id": "group_stereotype_Controller",
+      "label": "Controller",
+      "kind": "stereotype",
+      "gridX": 0,
+      "gridY": 0,
+      "gridWidth": 1,
+      "gridHeight": 1,
+      "packing": "vertical",
+      "nodeIds": ["AppController"]
+    },
+    {
+      "id": "group_stereotype_Model",
+      "label": "Model",
+      "kind": "stereotype",
+      "gridX": 1,
+      "gridY": 0,
+      "gridWidth": 1,
+      "gridHeight": 1,
+      "packing": "compactGrid",
+      "nodeIds": ["AppModel"]
+    }
+  ]
+}
