@@ -8,9 +8,11 @@ import {
   MemoryLayoutLogger,
   normalizeLayoutInput,
   resolveLayoutEngineOptions,
+  validateRoutedDocument,
   type CoordinateRoutingLayoutV3
 } from "./index.js";
 import type { LayoutRunContext } from "./engine/LayoutEngine.js";
+import type { DiagramDocument, DiagramEdgeAnchor } from "../../core/src/index.js";
 
 export function runRoutingV2Tests(): void {
   runRoutingV2Slice1Tests();
@@ -47,6 +49,9 @@ export function runRoutingV2Slice4ATests(): void {
 export function runRoutingV2Slice4BTests(): void {
   outerLaneAvoidsBlockedNodeWhenStrategyEnabled();
   outerLaneRepairEmitsStructuredLogs();
+  routingSummaryReportsHardValidationStatus();
+  validationEventsAreLoggedBeforeRouteComplete();
+  validatorAllowsLegalSharedSegmentsOnly();
 }
 
 function registryRejectsUnknownEngine(): void {
@@ -283,10 +288,145 @@ function outerLaneRepairEmitsStructuredLogs(): void {
   assert.equal(result.report.trace?.some((event) => event.phase === "repair" && event.type.startsWith("route-repair-")), true);
 }
 
+function routingSummaryReportsHardValidationStatus(): void {
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> TargetModel",
+    "SourceController --> TargetModel : ok"
+  ].join("\n"));
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  setGroup(layout, "Controller", { x: 0, y: 0 });
+  setGroup(layout, "Model", { x: 650, y: 0 });
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+
+  assert.equal(result.report.routingSummary?.routeStrategy, "template-with-outer-lanes");
+  assert.equal(result.report.routingSummary?.hardValid, true);
+  assert.equal(result.report.routingSummary?.totalEdges, 1);
+  assert.equal(result.report.routingSummary?.validEdges, 1);
+  assert.equal(result.report.routingSummary?.invalidEdges, 0);
+  assert.equal(result.report.routingSummary?.edgeNodeHits, 0);
+  assert.equal(result.report.routingSummary?.illegalSharedSegments, 0);
+  assert.equal(result.document.layout?.score.invalidSharedSegments, 0);
+}
+
+function validationEventsAreLoggedBeforeRouteComplete(): void {
+  const parsed = parseBlockedLaneFixture();
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  setGroup(layout, "Controller", { x: 0, y: 0 });
+  setGroup(layout, "Helper", { x: 310, y: 0 });
+  setGroup(layout, "Model", { x: 620, y: 0 });
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+  const traceTypes = result.report.trace?.map((event) => event.type) ?? [];
+
+  assert.ok(indexOf(traceTypes, "route-strategy-selected") < indexOf(traceTypes, "route-candidates-generated"));
+  assert.ok(indexOf(traceTypes, "route-candidates-generated") < indexOf(traceTypes, "repair-complete"));
+  assert.ok(indexOf(traceTypes, "repair-complete") < indexOf(traceTypes, "route-validation-passed", "route-validation-failed"));
+  assert.ok(indexOf(traceTypes, "route-validation-passed", "route-validation-failed") < indexOf(traceTypes, "route-complete"));
+}
+
+function validatorAllowsLegalSharedSegmentsOnly(): void {
+  const legal = routedOverlapDocument("legal-shared", true);
+  const legalLogger = new MemoryLayoutLogger();
+  const legalResult = validateRoutedDocument(legal, legal, createContext(legalLogger));
+
+  assert.equal(legalResult.illegalSharedSegments, 0);
+
+  const illegal = routedOverlapDocument("illegal-shared", false);
+  const illegalLogger = new MemoryLayoutLogger();
+  const illegalResult = validateRoutedDocument(illegal, illegal, createContext(illegalLogger));
+
+  assert.ok(illegalResult.illegalSharedSegments > 0);
+  assert.ok(illegalLogger.events.some((event) => event.type === "illegal-shared-segment"));
+}
+
 function createContext(logger: MemoryLayoutLogger): LayoutRunContext {
   return {
     logger,
     options: resolveLayoutEngineOptions()
+  };
+}
+
+function indexOf(values: string[], ...types: string[]): number {
+  const index = values.findIndex((value) => types.includes(value));
+  assert.ok(index >= 0, `Expected trace to include one of: ${types.join(", ")}`);
+  return index;
+}
+
+function routedOverlapDocument(id: string, sharedSource: boolean): DiagramDocument {
+  const east: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const west: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+  const nodes = [
+    node("A", 0, 0),
+    node("B", 200, 0),
+    node(sharedSource ? "D" : "C", sharedSource ? 200 : 0, 0),
+    ...(sharedSource ? [] : [node("D", 200, 0)])
+  ];
+  const secondSource = sharedSource ? "A" : "C";
+
+  return {
+    id,
+    type: "classDiagram",
+    nodes,
+    edges: [
+      routedEdge("edge_1", "A", "B", east, west),
+      routedEdge("edge_2", secondSource, "D", east, west)
+    ],
+    diagnostics: []
+  };
+}
+
+function node(id: string, x: number, y: number) {
+  return {
+    id,
+    label: id,
+    kind: "class" as const,
+    attributes: [],
+    methods: [],
+    layout: {
+      x,
+      y,
+      width: 80,
+      height: 40,
+      headerHeight: 24,
+      lineHeight: 16,
+      separatorHeight: 4
+    }
+  };
+}
+
+function routedEdge(id: string, sourceId: string, targetId: string, sourceAnchor: DiagramEdgeAnchor, targetAnchor: DiagramEdgeAnchor) {
+  return {
+    id,
+    sourceId,
+    targetId,
+    kind: "directedAssociation" as const,
+    operator: "-->" as const,
+    layout: {
+      sourceAnchor,
+      targetAnchor,
+      routeSource: "engine-v2" as const,
+      routedSegments: [{
+        id: `${id}:direct`,
+        sourceId,
+        targetId,
+        sourceAnchor,
+        targetAnchor,
+        waypoints: [{ x: 140, y: 20 }],
+        markerPolicy: { start: true, end: true },
+        strategy: "corridor" as const
+      }]
+    }
   };
 }
 

@@ -1232,3 +1232,21 @@ Decision:
 - Web integration must preserve manual mxGraph overrides unless the user explicitly reroutes selected or all generated edges.
 - Legacy stereotype-scored layout remains available until routing v2 is stable enough to become default.
 ```
+
+---
+
+## 36. Routing V2 Export Ownership Decision
+
+Decision:
+
+```text
+- Explicit CLI runs with --engine v2 use the strongest implemented v2 strategy: template-with-outer-lanes, dividers, repair, and validation summary.
+- This does not mean a complete lane-graph or A* router exists yet.
+- RoutingSummary is written to LayoutRunReport and mirrored into document.layout.score for downstream checks.
+- hardValid is false when there are node overlaps, group overlaps, edge-node hits, illegal shared segments, edge identity violations, invalid dividers, or routing fallbacks.
+- Segment overlap metrics are split into all segmentOverlaps and hard-failure illegalSharedSegments.
+- For v2-routed output, the engine owns generated route geometry.
+- The draw.io exporter serializes v2 engine anchors, waypoints, and divider split segments instead of computing divider auto-routes itself.
+- The exporter keeps legacy routing behavior separate so existing non-v2 output is not changed.
+- The CLI may still write a .drawio file when hardValid=false, but the report must say which constraints failed.
+```

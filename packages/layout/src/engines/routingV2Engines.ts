@@ -28,6 +28,12 @@ import {
   type CoordinateRoutingLayoutV3,
   type NormalizedCoordinateRoutingIntent
 } from "../normalizers/coordinateRoutingLayoutV3.js";
+import { buildRoutingSummary } from "../routing/RoutingSummary.js";
+import {
+  collectRoutingPaths,
+  countRouteNodeHits,
+  validateRoutedDocument as validateRoutingResult
+} from "../routing/RoutingValidator.js";
 import { templateOnlyRouteStrategy, templateWithOuterLanesRouteStrategy } from "../routing/templateRouter.js";
 import type { RouteResult, RoutingContext } from "../routing/RouteStrategy.js";
 
@@ -104,6 +110,12 @@ function runRoutingV2(
   const routeStrategy = options.routeStrategy === "template-with-outer-lanes"
     ? templateWithOuterLanesRouteStrategy
     : templateOnlyRouteStrategy;
+  context.logger.info({
+    phase: "route",
+    type: "route-strategy-selected",
+    message: `Routing strategy ${routeStrategy.id} selected.`,
+    data: { requestedRouteStrategy: options.routeStrategy, routeStrategy: routeStrategy.id }
+  });
   if (options.routeStrategy === "astar") {
     context.logger.warn({
       phase: "route",
@@ -116,9 +128,35 @@ function runRoutingV2(
     intent: normalizedIntent,
     context: routingContext
   });
-  const routedDocument = applyRouteResult(prepared, routeResult, engine, context);
+  const routedDocument = applyRouteResult(prepared, routeResult);
   const score = scoreLayout(routedDocument);
-  const validation = validateRoutedDocument(routedDocument, context);
+  const validation = validateRoutingResult(prepared, routedDocument, context);
+  const routingSummary = buildRoutingSummary({
+    document: routedDocument,
+    routeStrategy: routeStrategy.id,
+    score,
+    validation,
+    events: logger.events
+  });
+  context.logger.log({
+    level: routingSummary.hardValid ? "info" : "error",
+    phase: "validate",
+    type: routingSummary.hardValid ? "route-validation-passed" : "route-validation-failed",
+    message: routingSummary.hardValid
+      ? "Routing hard validation passed."
+      : "Routing hard validation failed.",
+    data: { routingSummary }
+  });
+  context.logger.info({
+    phase: "route",
+    type: "route-complete",
+    message: `${engine} routed ${routeResult.edges.length} edges.`,
+    data: {
+      hardValid: routingSummary.hardValid,
+      validEdges: routingSummary.validEdges,
+      invalidEdges: routingSummary.invalidEdges
+    }
+  });
   const document: DiagramDocument = {
     ...routedDocument,
     diagnostics: [
@@ -129,17 +167,17 @@ function runRoutingV2(
       engine,
       score: {
         ...score,
-        edgeIdentityViolations: validation.edgeIdentityViolations,
-        invalidSharedSegments: validation.invalidSharedSegments,
-        outerLaneUsages: logger.events.filter((event) => event.type === "outer-lane-used").length,
-        routingFailures: logger.events.filter((event) => event.type === "routing-fallback-used").length
+        edgeIdentityViolations: routingSummary.edgeIdentityViolations,
+        invalidSharedSegments: routingSummary.illegalSharedSegments,
+        outerLaneUsages: routingSummary.outerLaneUsages,
+        routingFailures: routingSummary.routingFailures
       }
     }
   };
 
   return {
     document,
-    report: logger.report(engine, forcedSourceFormat ?? normalizeResult.sourceFormat, options.traceRouting)
+    report: logger.report(engine, forcedSourceFormat ?? normalizeResult.sourceFormat, options.traceRouting, routingSummary)
   };
 }
 
@@ -246,13 +284,7 @@ function packGroup(group: DiagramGroup, nodes: DiagramNode[], packing: "vertical
   group.layout.height = nodes.reduce((total, node) => total + (node.layout?.height ?? 0), 0) + nodeGapY * (nodes.length - 1) + groupPadding * 2;
 }
 
-function applyRouteResult(document: DiagramDocument, routeResult: RouteResult, engine: LayoutEngineId, context: LayoutRunContext): DiagramDocument {
-  context.logger.info({
-    phase: "route",
-    type: "route-complete",
-    message: `${engine} routed ${routeResult.edges.length} edges.`
-  });
-
+function applyRouteResult(document: DiagramDocument, routeResult: RouteResult): DiagramDocument {
   return {
     ...document,
     edges: routeResult.edges,
@@ -261,82 +293,11 @@ function applyRouteResult(document: DiagramDocument, routeResult: RouteResult, e
   };
 }
 
-function validateRoutedDocument(document: DiagramDocument, context: LayoutRunContext): { edgeIdentityViolations: number; invalidSharedSegments: number } {
-  let edgeIdentityViolations = 0;
-  let invalidSharedSegments = 0;
-  const originalEdgeById = new Map(document.edges.map((edge) => [edge.id, edge]));
-  const paths = document.edges.map((edge) => ({ edge, points: edgePathPoints(edge, document.nodes) })).filter((path) => path.points.length >= 2);
-
-  for (const edge of document.edges) {
-    const original = originalEdgeById.get(edge.id);
-    if (original && (original.sourceId !== edge.sourceId || original.targetId !== edge.targetId)) {
-      edgeIdentityViolations += 1;
-      context.logger.error({
-        phase: "validate",
-        type: "edge-identity-violation",
-        message: `Edge ${edge.id} changed source or target during routing.`,
-        edgeId: edge.id
-      });
-    }
-
-    const points = edgePathPoints(edge, document.nodes);
-    if (countEdgeNodeHits(edge, points, document.nodes) > 0) {
-      context.logger.error({
-        phase: "validate",
-        type: "edge-node-hit",
-        message: `Edge ${edge.id} crosses a non-terminal node.`,
-        edgeId: edge.id
-      });
-    }
-  }
-
-  for (let leftIndex = 0; leftIndex < paths.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < paths.length; rightIndex += 1) {
-      const left = paths[leftIndex];
-      const right = paths[rightIndex];
-      if (canShareSegment(left.edge, right.edge)) {
-        continue;
-      }
-      for (const [leftStart, leftEnd] of pathSegments(left.points)) {
-        for (const [rightStart, rightEnd] of pathSegments(right.points)) {
-          if (segmentsOverlap(leftStart, leftEnd, rightStart, rightEnd)) {
-            invalidSharedSegments += 1;
-            context.logger.error({
-              phase: "validate",
-              type: "illegal-shared-segment",
-              message: `Edges ${left.edge.id} and ${right.edge.id} share a segment without a common source or target.`,
-              edgeId: left.edge.id,
-              data: { otherEdgeId: right.edge.id }
-            });
-          }
-        }
-      }
-    }
-  }
-
-  for (const divider of document.routingDividers ?? []) {
-    const dividerEdges = document.edges.filter((edge) => divider.sourceEdgeIds.includes(edge.id));
-    const valid = divider.mode === "fanOut"
-      ? new Set(dividerEdges.map((edge) => edge.sourceId)).size === 1
-      : new Set(dividerEdges.map((edge) => edge.targetId)).size === 1;
-    if (!valid) {
-      context.logger.error({
-        phase: "validate",
-        type: "invalid-divider-group",
-        message: `Routing divider ${divider.id} is not a legal ${divider.mode} group.`,
-        dividerId: divider.id
-      });
-    }
-  }
-
-  return { edgeIdentityViolations, invalidSharedSegments };
-}
-
 function scoreLayout(document: DiagramDocument): DiagramLayoutScore {
-  const paths = document.edges.map((edge) => ({ edge, points: edgePathPoints(edge, document.nodes) })).filter((path) => path.points.length >= 2);
+  const paths = collectRoutingPaths(document).filter((path) => path.points.length >= 2);
   const nodeOverlaps = countRectangleOverlaps(document.nodes);
   const groupOverlaps = countRectangleOverlaps(document.groups ?? []);
-  const edgeNodeHits = paths.reduce((sum, path) => sum + countEdgeNodeHits(path.edge, path.points, document.nodes), 0);
+  const edgeNodeHits = paths.reduce((sum, path) => sum + countRouteNodeHits(path, document.nodes), 0);
   const segmentOverlaps = countSegmentOverlaps(paths);
   const edgeCrossings = countEdgeCrossings(paths);
   const edgeBends = paths.reduce((sum, path) => sum + countBends(path.points), 0);
@@ -495,7 +456,8 @@ function countDuplicateAnchors(edges: DiagramEdge[]): number {
 function layoutBounds(document: DiagramDocument): { width: number; height: number } {
   const rectangles = [
     ...document.nodes.map((node) => node.layout),
-    ...(document.groups ?? []).map((group) => group.layout)
+    ...(document.groups ?? []).map((group) => group.layout),
+    ...(document.routingDividers ?? []).map((divider) => divider.layout)
   ].filter((layout): layout is { x: number; y: number; width: number; height: number } => Boolean(layout));
 
   if (rectangles.length === 0) {

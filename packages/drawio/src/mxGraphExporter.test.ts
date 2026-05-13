@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
-import { applyStereotypeGridLayout } from "../../layout/src/index.js";
+import {
+  applyStereotypeGridLayout,
+  createDefaultLayoutEngineRegistry,
+  createInitialCoordinateRoutingLayoutV3
+} from "../../layout/src/index.js";
 import { parseMermaidClassDiagram } from "../../parsers/src/index.js";
+import type { DiagramDocument, DiagramEdgeAnchor } from "../../core/src/index.js";
 import type { DrawioExportOptions } from "./mxGraphExporter.js";
 import { toMxGraphModelXml } from "./mxGraphExporter.js";
 
@@ -17,6 +22,8 @@ export function runDrawioExporterTests(): void {
   exportsEdgeWaypoints();
   exportsOrthogonalAnchoredEdges();
   exportsDenseRoutingDividersAsSplitEdges();
+  exportsEngineV2RoutedEdgesWithoutAutoJetty();
+  exportsEngineOwnedDividerSegments();
   exportsOperatorSpecificArrowEnds();
   exportsExplicitSwimlaneHeaderSizes();
   exportsThreeClassCompartments();
@@ -135,6 +142,57 @@ function exportsDenseRoutingDividersAsSplitEdges(): void {
   assert.ok(edgeCells.every((cell) => classIds.has(cell.target) || dividerIds.has(cell.target)));
   assert.equal(edgeCells.filter((cell) => dividerIds.has(cell.source)).length, 4);
   assert.equal(edgeCells.filter((cell) => dividerIds.has(cell.target)).length, 1);
+}
+
+function exportsEngineV2RoutedEdgesWithoutAutoJetty(): void {
+  const xml = toMxGraphModelXml(engineOwnedRouteDocument());
+  assert.equal(XMLValidator.validate(xml), true);
+  const edgeCells = asArray(parseXml(xml).mxGraphModel.root.mxCell).filter((cell) => cell.edge === "1");
+
+  assert.equal(edgeCells.length, 1);
+  assert.ok(!String(edgeCells[0].style).includes("jettySize=auto"));
+  assert.ok(String(edgeCells[0].style).includes("edgeStyle=orthogonalEdgeStyle"));
+  assert.ok(String(edgeCells[0].style).includes("exitPerimeter=0"));
+  assert.ok(String(edgeCells[0].style).includes("entryPerimeter=0"));
+  assert.deepEqual(waypointsForCell(edgeCells[0]).map((point) => ({ x: Number(point.x), y: Number(point.y) })), [
+    { x: 160, y: 30 },
+    { x: 160, y: 100 }
+  ]);
+}
+
+function exportsEngineOwnedDividerSegments(): void {
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "<<Model>> ThirdModel",
+    "<<Model>> FourthModel",
+    "SourceController ..> FirstModel : first",
+    "SourceController ..> SecondModel : second",
+    "SourceController ..> ThirdModel : third",
+    "SourceController ..> FourthModel : fourth"
+  ].join("\n"));
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes" }
+  });
+  const xml = toMxGraphModelXml(result.document);
+  assert.equal(XMLValidator.validate(xml), true);
+  const cells = asArray(parseXml(xml).mxGraphModel.root.mxCell);
+  const dividerCells = cells.filter((cell) => String(cell.style).includes("autoDiagramRoutingDivider=1"));
+  const edgeCells = cells.filter((cell) => cell.edge === "1");
+
+  assert.equal(result.document.routingDividers?.length, 1);
+  assert.equal(dividerCells.length, 1);
+  assert.equal(edgeCells.length, 5);
+  assert.ok(result.document.edges.every((edge) => edge.layout?.routeSource === "engine-v2"));
+  assert.ok(result.document.edges.some((edge) => (edge.layout?.routedSegments?.length ?? 0) > 1));
+  assert.ok(edgeCells.every((cell) => !String(cell.style).includes("jettySize=auto")));
+  assert.ok(edgeCells.some((cell) => waypointCount(cell) > 0));
 }
 
 function exportsOperatorSpecificArrowEnds(): void {
@@ -269,6 +327,65 @@ function waypointsForCell(cell: any): any[] {
 
 function renderFixture(source = fixture, options?: DrawioExportOptions): string {
   return toMxGraphModelXml(applyStereotypeGridLayout(parseMermaidClassDiagram(source)), options);
+}
+
+function engineOwnedRouteDocument(): DiagramDocument {
+  const east: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const west: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "Source --> Target : custom"
+  ].join("\n"));
+  const [source, target] = parsed.nodes;
+
+  return {
+    ...parsed,
+    nodes: [
+      {
+        ...source,
+        layout: {
+          x: 0,
+          y: 0,
+          width: 120,
+          height: 60,
+          headerHeight: 32,
+          lineHeight: 20,
+          separatorHeight: 8
+        }
+      },
+      {
+        ...target,
+        layout: {
+          x: 280,
+          y: 70,
+          width: 120,
+          height: 60,
+          headerHeight: 32,
+          lineHeight: 20,
+          separatorHeight: 8
+        }
+      }
+    ],
+    edges: parsed.edges.map((edge) => ({
+      ...edge,
+      layout: {
+        sourceAnchor: east,
+        targetAnchor: west,
+        routeSource: "engine-v2" as const,
+        routedSegments: [{
+          id: `${edge.id}:direct`,
+          sourceId: edge.sourceId,
+          targetId: edge.targetId,
+          label: edge.label ?? "",
+          sourceAnchor: east,
+          targetAnchor: west,
+          waypoints: [{ x: 160, y: 30 }, { x: 160, y: 100 }],
+          markerPolicy: { start: true, end: true },
+          strategy: "corridor" as const
+        }]
+      }
+    }))
+  };
 }
 
 function parseXml(xml: string): any {

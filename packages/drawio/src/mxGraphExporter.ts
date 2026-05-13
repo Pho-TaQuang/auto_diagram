@@ -6,6 +6,7 @@ import type {
   DiagramNode,
   DiagramNodeLayout,
   DiagramPoint,
+  DiagramRoutedEdgeSegment,
   DiagramRoutingDivider
 } from "../../core/src/index.js";
 
@@ -110,6 +111,7 @@ type ExportEdgeSpec = {
   waypoints: DiagramPoint[];
   markerPolicy: EdgeMarkerPolicy;
   autoRoute?: boolean;
+  v2Routed?: boolean;
 };
 
 type EdgeMarkerPolicy = {
@@ -293,6 +295,11 @@ function buildExportEdgeSpecs(document: DiagramDocument): ExportEdgeSpec[] {
   }
 
   for (const edge of document.edges) {
+    if (edge.layout?.routeSource === "engine-v2" && edge.layout.routedSegments && edge.layout.routedSegments.length > 0) {
+      specs.push(...routedSegmentExportEdgeSpecs(edge, edge.layout.routedSegments));
+      continue;
+    }
+
     const divider = dividerByEdgeId.get(edge.id);
     if (!divider || claimedEdgeIds.has(edge.id)) {
       if (!divider) {
@@ -325,8 +332,23 @@ function directExportEdgeSpec(edge: DiagramEdge): ExportEdgeSpec {
     sourceAnchor: edge.layout?.sourceAnchor,
     targetAnchor: edge.layout?.targetAnchor,
     waypoints: edge.layout?.waypoints ?? [],
-    markerPolicy: { start: true, end: true }
+    markerPolicy: { start: true, end: true },
+    v2Routed: edge.layout?.routeSource === "engine-v2"
   };
+}
+
+function routedSegmentExportEdgeSpecs(edge: DiagramEdge, segments: DiagramRoutedEdgeSegment[]): ExportEdgeSpec[] {
+  return segments.map((segment) => ({
+    edge,
+    sourceId: segment.sourceId,
+    targetId: segment.targetId,
+    label: segment.label ?? "",
+    sourceAnchor: segment.sourceAnchor,
+    targetAnchor: segment.targetAnchor,
+    waypoints: segment.waypoints,
+    markerPolicy: segment.markerPolicy,
+    v2Routed: true
+  }));
 }
 
 function splitDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEdge[]): ExportEdgeSpec[] {
@@ -676,7 +698,7 @@ function edgeStyle(edge: DiagramEdge, edgeSpec: ExportEdgeSpec, markerPolicy: Ed
     "rounded=0",
     "edgeStyle=orthogonalEdgeStyle",
     "orthogonalLoop=1",
-    "jettySize=auto",
+    ...(edgeSpec.v2Routed ? [] : ["jettySize=auto"]),
     "html=1"
   ].join(";");
 }

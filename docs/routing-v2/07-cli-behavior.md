@@ -18,3 +18,16 @@ Logging flags:
 - `--log-layout-json <path>` writes the full structured report
 
 Any earlier `--engine v2` exposure is dev/opt-in plumbing for integration tests and must not change default behavior.
+
+For `generate --engine v2`, the CLI passes the strongest currently implemented v2 strategy to the engine:
+
+```ts
+{
+  routeStrategy: "template-with-outer-lanes",
+  traceRouting: traceRouting || verbose || Boolean(logLayoutJson)
+}
+```
+
+This enables template routing, outer lanes, dividers, repair, and validation summary for explicit v2 runs only. The default CLI path remains legacy until Slice 8.
+
+The CLI writes `.drawio` output even when `routingSummary.hardValid` is `false`. Hard validation failures are surfaced through default warnings/errors, diagnostics, and optional report JSON instead of failing generation at runtime.

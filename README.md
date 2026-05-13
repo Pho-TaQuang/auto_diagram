@@ -228,13 +228,17 @@ npm run layout:init -- docs/demo_mermaid.md -o out/demo.routing-v3.json --engine
 npm run generate -- docs/demo_mermaid.md -o out/demo-v2.drawio --engine v2 --layout out/demo.routing-v3.json
 ```
 
+When `generate --engine v2` is selected explicitly, the CLI uses the strongest currently implemented v2 route strategy: template routing with outer lanes, routing dividers, repair, and hard validation reporting. This is not a full lane-graph or A* router.
+
 Routing v2 can emit structured run reports:
 
 ```bash
 npm run generate -- docs/demo_mermaid.md -o out/demo-v2.drawio --engine v2 --layout out/demo.routing-v3.json --verbose --log-layout-json out/demo.routing-report.json
 ```
 
-Use `--trace-routing` to include debug-level routing events in the console output.
+Use `--trace-routing` to include debug-level routing events in the console output. The report includes `routingSummary`, including `hardValid`, valid/invalid edge counts, node hits, crossings, total segment overlaps, illegal shared segments, repair counts, and routing fallback counts. The CLI still writes `.drawio` output when `hardValid` is `false`; the report and console diagnostics describe the failed constraints.
+
+For v2-routed edges, the layout engine owns generated anchors, waypoints, routing divider split segments, and validation status. The draw.io exporter serializes those engine-owned routes directly and does not invent divider waypoints for v2 output. Legacy exports keep the existing draw.io orthogonal routing style and `jettySize=auto`; v2 routed edges keep explicit anchors and waypoints but omit `jettySize=auto`.
 
 Open `out/demo.drawio` in draw.io / diagrams.net to inspect the result.
 

@@ -40,9 +40,11 @@ export type {
   LayoutLogEvent,
   LayoutLogLevel,
   LayoutLogPhase,
+  LayoutRouteStrategy,
   LayoutLogger,
   LayoutRunReport,
-  LayoutSourceFormat
+  LayoutSourceFormat,
+  RoutingSummary
 } from "./engine/LayoutRunReport.js";
 export type {
   CoordinateRoutingLayoutGroupV3,
@@ -66,6 +68,11 @@ export type {
   RoutingValidationResult,
   RoutingValidator
 } from "./routing/RoutingValidator.js";
+export {
+  validateRoutedDocument
+} from "./routing/RoutingValidator.js";
+export { buildRoutingSummary } from "./routing/RoutingSummary.js";
+export type { BuildRoutingSummaryInput } from "./routing/RoutingSummary.js";
 export type {
   AnchorOrderIntent,
   AnchorOrderMode,

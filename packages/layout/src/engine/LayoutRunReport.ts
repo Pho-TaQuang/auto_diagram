@@ -38,11 +38,37 @@ export type LayoutLogEvent = {
   data?: Record<string, unknown>;
 };
 
+export type LayoutRouteStrategy =
+  | "template-only"
+  | "template-with-outer-lanes"
+  | "astar";
+
+export type RoutingSummary = {
+  routeStrategy: LayoutRouteStrategy;
+  hardValid: boolean;
+  totalEdges: number;
+  validEdges: number;
+  invalidEdges: number;
+  nodeOverlaps: number;
+  groupOverlaps: number;
+  edgeNodeHits: number;
+  edgeCrossings: number;
+  segmentOverlaps: number;
+  illegalSharedSegments: number;
+  edgeIdentityViolations: number;
+  invalidDividers: number;
+  outerLaneUsages: number;
+  routingFailures: number;
+  repairAccepted: number;
+  repairRejected: number;
+};
+
 export type LayoutRunReport = {
   engine: LayoutEngineId;
   sourceFormat?: LayoutSourceFormat;
   warnings: LayoutLogEvent[];
   errors: LayoutLogEvent[];
+  routingSummary?: RoutingSummary;
   trace?: LayoutLogEvent[];
 };
 
@@ -77,12 +103,18 @@ export class MemoryLayoutLogger implements LayoutLogger {
     this.log({ ...event, level: "error" });
   }
 
-  report(engine: LayoutEngineId, sourceFormat?: LayoutSourceFormat, includeTrace = false): LayoutRunReport {
+  report(
+    engine: LayoutEngineId,
+    sourceFormat?: LayoutSourceFormat,
+    includeTrace = false,
+    routingSummary?: RoutingSummary
+  ): LayoutRunReport {
     return {
       engine,
       sourceFormat,
       warnings: this.events.filter((event) => event.level === "warn"),
       errors: this.events.filter((event) => event.level === "error"),
+      ...(routingSummary ? { routingSummary } : {}),
       ...(includeTrace ? { trace: [...this.events] } : {})
     };
   }

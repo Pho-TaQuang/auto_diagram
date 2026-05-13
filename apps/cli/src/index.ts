@@ -68,6 +68,7 @@ export async function runCliCommand(args: string[]): Promise<void> {
         mode,
         layoutInput,
         options: {
+          routeStrategy: "template-with-outer-lanes",
           traceRouting: options.traceRouting || options.verbose || Boolean(options.logLayoutJson)
         }
       });

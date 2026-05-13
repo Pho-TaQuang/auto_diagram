@@ -5,12 +5,10 @@ import type {
   DiagramRoutingDivider
 } from "../../../core/src/index.js";
 import type { LayoutRunContext } from "../engine/LayoutEngine.js";
+import type { LayoutRouteStrategy, RoutingSummary } from "../engine/LayoutRunReport.js";
 import type { NormalizedCoordinateRoutingIntent } from "../normalizers/coordinateRoutingLayoutV3.js";
 
-export type RouteStrategyId =
-  | "template-only"
-  | "template-with-outer-lanes"
-  | "astar";
+export type RouteStrategyId = LayoutRouteStrategy;
 
 export type RoutingContext = {
   intent: NormalizedCoordinateRoutingIntent;
@@ -27,6 +25,7 @@ export type RouteResult = {
   edges: DiagramEdge[];
   dividers: DiagramRoutingDivider[];
   diagnostics: DiagramDiagnostic[];
+  summary?: Partial<RoutingSummary>;
 };
 
 export interface RouteStrategy {

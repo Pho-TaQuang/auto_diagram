@@ -55,6 +55,30 @@ export type DiagramEdgeAnchor = {
   ratio: number;
 };
 
+export type DiagramRoutedEdgeSegmentStrategy =
+  | "direct"
+  | "corridor"
+  | "outer-lane"
+  | "divider"
+  | "fallback";
+
+export type DiagramRoutedEdgeMarkerPolicy = {
+  start: boolean;
+  end: boolean;
+};
+
+export type DiagramRoutedEdgeSegment = {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  label?: string;
+  sourceAnchor?: DiagramEdgeAnchor;
+  targetAnchor?: DiagramEdgeAnchor;
+  waypoints: DiagramPoint[];
+  markerPolicy: DiagramRoutedEdgeMarkerPolicy;
+  strategy: DiagramRoutedEdgeSegmentStrategy;
+};
+
 export type DiagramNodeLayout = DiagramPoint & DiagramSize & {
   headerHeight: number;
   lineHeight: number;
@@ -65,6 +89,8 @@ export type DiagramEdgeLayout = {
   waypoints?: DiagramPoint[];
   sourceAnchor?: DiagramEdgeAnchor;
   targetAnchor?: DiagramEdgeAnchor;
+  routedSegments?: DiagramRoutedEdgeSegment[];
+  routeSource?: "engine-v2";
 };
 
 export type DiagramLayoutScore = {

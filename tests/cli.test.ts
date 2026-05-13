@@ -134,9 +134,14 @@ async function generatesWithRoutingV2LayoutAndReport(): Promise<void> {
     assert.equal(XMLValidator.validate(xml), true);
     assert.equal(report.engine, "manual-routing-v2");
     assert.equal(report.sourceFormat, "coordinate-routing-v3");
+    assert.equal(report.routingSummary.routeStrategy, "template-with-outer-lanes");
     assert.ok(Array.isArray(report.warnings));
     assert.ok(Array.isArray(report.errors));
     assert.ok(Array.isArray(report.trace));
+    assert.ok(report.trace.some((event: any) => event.type === "route-strategy-selected" && event.data.routeStrategy === "template-with-outer-lanes"));
+    assert.ok(report.trace.some((event: any) => event.type === "divider-created"));
+    assert.ok(report.trace.some((event: any) => event.type === "outer-lane-used"));
+    assert.ok(report.trace.some((event: any) => event.type === "repair-complete"));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
