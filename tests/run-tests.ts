@@ -9,7 +9,8 @@ import {
   runRoutingV2Slice3Tests,
   runRoutingV2Slice4ATests,
   runRoutingV2Slice4BTests,
-  runRoutingV2Slice5ATests
+  runRoutingV2Slice5ATests,
+  runRoutingV2Slice5BTests
 } from "../packages/layout/src/routingV2.test.js";
 import { runStereotypeGridLayoutTests } from "../packages/layout/src/stereotypeGridLayout.test.js";
 import { runParserTests } from "../packages/parsers/src/mermaidClassDiagram.test.js";
@@ -27,6 +28,7 @@ const tests: Array<[string, () => void | Promise<void>]> = [
   ["routing v2 slice 4a divider planning", runRoutingV2Slice4ATests],
   ["routing v2 slice 4b outer lanes repair", runRoutingV2Slice4BTests],
   ["routing v2 slice 5a strict sharing diagnostics", runRoutingV2Slice5ATests],
+  ["routing v2 slice 5b recovery optimization", runRoutingV2Slice5BTests],
   ["stereotype grid layout", runStereotypeGridLayoutTests],
   ["drawio exporter", runDrawioExporterTests],
   ["mxGraph model", runMxGraphModelTests],

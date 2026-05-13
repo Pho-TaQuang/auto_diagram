@@ -10,10 +10,12 @@ Slices:
 4. Slice 3: Route-only MVP.
 5. Slice 4A: Divider planning.
 6. Slice 4B: Outer lanes and repair.
-7. Slice 5: CLI v2 workflow.
-8. Slice 6: Schema freeze.
-9. Slice 7: Web integration.
-10. Slice 8: Default switch.
+7. Slice 5A: Strict segment sharing and structured diagnostics.
+8. Slice 5B: Sparse lane-graph recovery and generated-layout optimization.
+9. Slice 5: CLI v2 workflow.
+10. Slice 6: Schema freeze.
+11. Slice 7: Web integration.
+12. Slice 8: Default switch.
 
 Definition of done for every slice:
 
@@ -37,6 +39,8 @@ npm run test:routing-v2:slice2
 npm run test:routing-v2:slice3
 npm run test:routing-v2:slice4a
 npm run test:routing-v2:slice4b
+npm run test:routing-v2:slice5a
+npm run test:routing-v2:slice5b
 npm run test:routing-v2:slice5
 npm run test:cli
 npm run test:web

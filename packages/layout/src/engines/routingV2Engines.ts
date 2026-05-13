@@ -26,7 +26,8 @@ import {
   normalizeCoordinateRoutingIntent,
   normalizeLayoutInput,
   type CoordinateRoutingLayoutV3,
-  type NormalizedCoordinateRoutingIntent
+  type NormalizedCoordinateRoutingIntent,
+  type NormalizedGroupIntent
 } from "../normalizers/coordinateRoutingLayoutV3.js";
 import { buildRoutingSummary } from "../routing/RoutingSummary.js";
 import {
@@ -35,7 +36,7 @@ import {
   validateRoutedDocument as validateRoutingResult
 } from "../routing/RoutingValidator.js";
 import { templateOnlyRouteStrategy, templateWithOuterLanesRouteStrategy } from "../routing/templateRouter.js";
-import type { RouteResult, RoutingContext } from "../routing/RouteStrategy.js";
+import type { RouteResult, RouteStrategy, RoutingContext } from "../routing/RouteStrategy.js";
 
 const groupPadding = 32;
 const nodeGapX = 80;
@@ -104,12 +105,15 @@ function runRoutingV2(
     outerLaneMargin: normalizeResult.intent.routing?.outerLaneMargin ?? options.outerLaneMargin,
     maxRepairPasses: normalizeResult.intent.routing?.maxRepairPasses ?? options.maxRepairPasses
   };
-  const normalizedIntent = normalizeCoordinateRoutingIntent(normalizeResult.intent, routingOptions);
-  const prepared = applyCoordinateRoutingIntent(request.document, normalizedIntent, context);
-  const routingContext: RoutingContext = { intent: normalizedIntent, run: context };
   const routeStrategy = options.routeStrategy === "template-with-outer-lanes"
     ? templateWithOuterLanesRouteStrategy
     : templateOnlyRouteStrategy;
+  let normalizedIntent = normalizeCoordinateRoutingIntent(normalizeResult.intent, routingOptions);
+  if (engine === "suggest-initial-v2" || engine === "auto-arrange-v2") {
+    normalizedIntent = optimizeGeneratedRoutingIntent(request.document, normalizedIntent, routeStrategy, context);
+  }
+  const prepared = applyCoordinateRoutingIntent(request.document, normalizedIntent, context);
+  const routingContext: RoutingContext = { intent: normalizedIntent, run: context };
   context.logger.info({
     phase: "route",
     type: "route-strategy-selected",
@@ -191,6 +195,278 @@ function runRoutingV2(
       validation.edgeResults
     )
   };
+}
+
+type GeneratedIntentCandidate = {
+  name: string;
+  intent: NormalizedCoordinateRoutingIntent;
+};
+
+type CandidateScoreVector = [
+  hardFailures: number,
+  edgeCrossings: number,
+  illegalSegmentOverlaps: number,
+  routingFallbacks: number,
+  edgeBends: number,
+  totalEdgeLength: number,
+  layoutArea: number
+];
+
+function optimizeGeneratedRoutingIntent(
+  document: DiagramDocument,
+  intent: NormalizedCoordinateRoutingIntent,
+  routeStrategy: RouteStrategy,
+  context: LayoutRunContext
+): NormalizedCoordinateRoutingIntent {
+  const candidates = generatedRoutingIntentCandidates(document, intent);
+  let best: { candidate: GeneratedIntentCandidate; vector: CandidateScoreVector } | undefined;
+
+  for (const candidate of candidates) {
+    const attemptLogger = new MemoryLayoutLogger();
+    const attemptContext: LayoutRunContext = { logger: attemptLogger, options: context.options };
+    const prepared = applyCoordinateRoutingIntent(document, candidate.intent, attemptContext);
+    const routeResult = routeStrategy.route({
+      document: prepared,
+      intent: candidate.intent,
+      context: { intent: candidate.intent, run: attemptContext }
+    });
+    const routed = applyRouteResult(prepared, routeResult);
+    const score = scoreLayout(routed);
+    const validation = validateRoutingResult(prepared, routed, attemptContext, attemptLogger.events);
+    const routingFallbacks = validation.edgeResults.filter((edge) => edge.routingFallbackUsed || edge.routingFailed).length;
+    const hardFailures =
+      score.nodeOverlaps +
+      score.groupOverlaps +
+      validation.edgeNodeHits +
+      validation.illegalSegmentOverlaps +
+      validation.edgeIdentityViolations +
+      validation.invalidDividers +
+      routingFallbacks;
+    const vector: CandidateScoreVector = [
+      hardFailures,
+      validation.edgeCrossings,
+      validation.illegalSegmentOverlaps,
+      routingFallbacks,
+      score.edgeBends,
+      score.totalEdgeLength,
+      score.layoutArea
+    ];
+
+    context.logger.debug({
+      phase: "route",
+      type: "generated-layout-candidate-evaluated",
+      message: `Generated routing layout candidate ${candidate.name} evaluated.`,
+      data: { candidate: candidate.name, score: vector }
+    });
+
+    if (!best || compareScoreVector(vector, best.vector) < 0) {
+      best = { candidate, vector };
+    }
+
+    if (vector[0] === 0 && vector[1] === 0) {
+      break;
+    }
+  }
+
+  return best?.candidate.intent ?? intent;
+}
+
+function generatedRoutingIntentCandidates(document: DiagramDocument, intent: NormalizedCoordinateRoutingIntent): GeneratedIntentCandidate[] {
+  const candidates: GeneratedIntentCandidate[] = [
+    { name: "normalized", intent }
+  ];
+  const variants: Array<{ xGap: number; yGap: number; packing: "original" | "vertical" }> = [
+    { xGap: 440, yGap: 640, packing: "vertical" },
+    { xGap: 440, yGap: 960, packing: "vertical" },
+    { xGap: 700, yGap: 960, packing: "vertical" },
+    { xGap: 700, yGap: 640, packing: "vertical" },
+    { xGap: 440, yGap: 960, packing: "original" }
+  ];
+
+  for (const variant of variants) {
+    candidates.push({
+      name: `layered-${variant.packing}-x${variant.xGap}-y${variant.yGap}`,
+      intent: createLayeredGeneratedIntent(document, intent, variant.xGap, variant.yGap, variant.packing)
+    });
+  }
+
+  return candidates;
+}
+
+function createLayeredGeneratedIntent(
+  document: DiagramDocument,
+  intent: NormalizedCoordinateRoutingIntent,
+  xGap: number,
+  yGap: number,
+  packingMode: "original" | "vertical"
+): NormalizedCoordinateRoutingIntent {
+  const groupByNodeId = new Map<string, string>();
+  for (const groupId of intent.groupOrder) {
+    const group = intent.groups[groupId];
+    group?.nodeOrder.forEach((nodeId) => groupByNodeId.set(nodeId, groupId));
+  }
+  const layers = computeGroupLayers(document, intent, groupByNodeId);
+  const groupsByLayer = new Map<number, string[]>();
+  for (const groupId of intent.groupOrder) {
+    const layer = layers.get(groupId) ?? 0;
+    groupsByLayer.set(layer, [...(groupsByLayer.get(layer) ?? []), groupId]);
+  }
+  for (const [layer, groupIds] of groupsByLayer) {
+    groupsByLayer.set(layer, orderLayerGroupIds(groupIds, document, groupByNodeId, intent));
+  }
+
+  const nextGroups = new Map<string, NormalizedGroupIntent>();
+  const sizes = new Map<string, { width: number; height: number }>();
+  for (const groupId of intent.groupOrder) {
+    const group = intent.groups[groupId];
+    if (!group) {
+      continue;
+    }
+    const packing = packingMode === "vertical" ? "vertical" : group.packing;
+    sizes.set(groupId, measureGeneratedGroup(document, group, packing));
+    nextGroups.set(groupId, { ...group, packing });
+  }
+
+  const layerIds = [...groupsByLayer.keys()].sort((left, right) => left - right);
+  const layerX = new Map<number, number>();
+  let x = 0;
+  for (const layer of layerIds) {
+    layerX.set(layer, x);
+    const maxWidth = Math.max(...(groupsByLayer.get(layer) ?? []).map((groupId) => sizes.get(groupId)?.width ?? 0), 0);
+    x += maxWidth + xGap;
+  }
+
+  const layerBounds = new Map<number, { top: number; bottom: number; center: number }>();
+  for (const layer of layerIds) {
+    let y = 0;
+    for (const groupId of groupsByLayer.get(layer) ?? []) {
+      const group = nextGroups.get(groupId);
+      const size = sizes.get(groupId);
+      if (!group || !size) {
+        continue;
+      }
+      nextGroups.set(groupId, { ...group, x: layerX.get(layer) ?? 0, y });
+      y += size.height + yGap;
+    }
+    const bottom = Math.max(0, y - yGap);
+    layerBounds.set(layer, { top: 0, bottom, center: bottom / 2 });
+  }
+  const globalCenter = Math.max(...[...layerBounds.values()].map((bounds) => bounds.center), 0);
+
+  for (const layer of layerIds) {
+    const groupIds = groupsByLayer.get(layer) ?? [];
+    if (groupIds.length !== 1) {
+      continue;
+    }
+    const groupId = groupIds[0];
+    const group = nextGroups.get(groupId);
+    const size = sizes.get(groupId);
+    if (!group || !size) {
+      continue;
+    }
+    const incomingSourceY = singleIncomingSourceY(groupId, document, groupByNodeId, nextGroups);
+    const hasOutgoing = document.edges.some((edge) => groupByNodeId.get(edge.sourceId) === groupId && groupByNodeId.get(edge.targetId) !== groupId);
+    const y = incomingSourceY !== undefined && !hasOutgoing
+      ? incomingSourceY
+      : Math.max(0, globalCenter - size.height / 2);
+    nextGroups.set(groupId, { ...group, y });
+  }
+
+  return {
+    ...intent,
+    groups: Object.fromEntries(intent.groupOrder.map((groupId) => [groupId, nextGroups.get(groupId) ?? intent.groups[groupId]]))
+  };
+}
+
+function computeGroupLayers(
+  document: DiagramDocument,
+  intent: NormalizedCoordinateRoutingIntent,
+  groupByNodeId: Map<string, string>
+): Map<string, number> {
+  const layers = new Map(intent.groupOrder.map((groupId) => [groupId, 0]));
+  for (let pass = 0; pass < intent.groupOrder.length; pass += 1) {
+    let changed = false;
+    for (const edge of document.edges) {
+      const sourceGroupId = groupByNodeId.get(edge.sourceId);
+      const targetGroupId = groupByNodeId.get(edge.targetId);
+      if (!sourceGroupId || !targetGroupId || sourceGroupId === targetGroupId) {
+        continue;
+      }
+      const nextLayer = Math.min(intent.groupOrder.length - 1, (layers.get(sourceGroupId) ?? 0) + 1);
+      if (nextLayer > (layers.get(targetGroupId) ?? 0)) {
+        layers.set(targetGroupId, nextLayer);
+        changed = true;
+      }
+    }
+    if (!changed) {
+      break;
+    }
+  }
+  return layers;
+}
+
+function orderLayerGroupIds(
+  groupIds: string[],
+  document: DiagramDocument,
+  groupByNodeId: Map<string, string>,
+  intent: NormalizedCoordinateRoutingIntent
+): string[] {
+  return [...groupIds].sort((left, right) =>
+    firstEdgeIndexForGroup(left, document, groupByNodeId) - firstEdgeIndexForGroup(right, document, groupByNodeId) ||
+    intent.groupOrder.indexOf(left) - intent.groupOrder.indexOf(right) ||
+    left.localeCompare(right)
+  );
+}
+
+function firstEdgeIndexForGroup(groupId: string, document: DiagramDocument, groupByNodeId: Map<string, string>): number {
+  const index = document.edges.findIndex((edge) => groupByNodeId.get(edge.sourceId) === groupId || groupByNodeId.get(edge.targetId) === groupId);
+  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function singleIncomingSourceY(
+  groupId: string,
+  document: DiagramDocument,
+  groupByNodeId: Map<string, string>,
+  groups: Map<string, NormalizedGroupIntent>
+): number | undefined {
+  const incoming = document.edges
+    .map((edge) => ({ sourceGroupId: groupByNodeId.get(edge.sourceId), targetGroupId: groupByNodeId.get(edge.targetId) }))
+    .filter((edge) => edge.targetGroupId === groupId && edge.sourceGroupId && edge.sourceGroupId !== groupId)
+    .map((edge) => groups.get(edge.sourceGroupId!))
+    .filter((group): group is NormalizedGroupIntent => Boolean(group));
+  if (incoming.length === 0) {
+    return undefined;
+  }
+  return incoming.reduce((sum, group) => sum + group.y, 0) / incoming.length;
+}
+
+function measureGeneratedGroup(document: DiagramDocument, groupIntent: NormalizedGroupIntent, packing: "vertical" | "horizontal"): { width: number; height: number } {
+  const nodeById = new Map(document.nodes.map((node) => [node.id, { ...node, layout: estimateClassNodeLayout(node) } satisfies DiagramNode]));
+  const nodes: DiagramNode[] = [];
+  for (const nodeId of groupIntent.nodeOrder) {
+    const node = nodeById.get(nodeId);
+    if (node) {
+      nodes.push(node);
+    }
+  }
+  const group: DiagramGroup = {
+    id: groupIntent.id,
+    label: groupIntent.label,
+    kind: groupIntent.kind,
+    nodeIds: nodes.map((node) => node.id),
+    layout: { x: 0, y: 0, width: 0, height: 0 }
+  };
+  packGroup(group, nodes, packing);
+  return { width: group.layout?.width ?? 0, height: group.layout?.height ?? 0 };
+}
+
+function compareScoreVector(left: CandidateScoreVector, right: CandidateScoreVector): number {
+  for (let index = 0; index < left.length; index += 1) {
+    if (Math.abs(left[index] - right[index]) > 0.001) {
+      return left[index] - right[index];
+    }
+  }
+  return 0;
 }
 
 function applyCoordinateRoutingIntent(

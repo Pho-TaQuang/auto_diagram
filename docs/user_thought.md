@@ -1268,3 +1268,22 @@ Decision:
 - Per-edge validation results use explicit node hit, crossing, and segment overlap reference objects instead of string arrays.
 - When hard validation fails, CLI generation still writes .drawio but emits layout-change-required diagnostics with actionable reason, edge ids, group ids, and suggested layout changes.
 ```
+
+---
+
+## 38. Routing V2 Slice 5B Recovery And Generated Optimization Decision
+
+Decision:
+
+```text
+- Slice 5B must remain generic; DmPhuongTien is a golden fixture, not a name-based special case.
+- Generated v2 layouts may search group gaps, group positions, packing, and node order variants.
+- Manual route-only v2 layouts must preserve locked group placement, packingLocked, and nodeOrderLocked.
+- Recovery routing uses deterministic private offset sweeps, outer lanes, obstacle-aware doglegs, and a bounded sparse lane graph.
+- Dense grid A* is intentionally not implemented.
+- Difficult edges are routed before simpler edges using generic congestion signals.
+- Divider-owned routes and ordinary routes participate in occupancy so later routes avoid non-divider overlap and crossings.
+- Local repair reroutes dirty edges after the first pass.
+- routing-fallback-used is emitted only after recovery and repair fail.
+- The DmPhuongTien generated v2 golden target is hardValid=true with edgeNodeHits=0, illegalSegmentOverlaps=0, routingFailures=0, routingFallbackUsed=0, edgeCrossings=0, invalidDividers=0, and edgeIdentityViolations=0.
+```

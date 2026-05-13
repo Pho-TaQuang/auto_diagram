@@ -15,6 +15,10 @@ const anchorStubDistance = 24;
 const routingDividerThickness = 10;
 const routingDividerMinLength = 48;
 const epsilon = 0.001;
+const laneGraphClearance = 36;
+const laneGraphMaxLinesPerAxis = 72;
+const laneGraphSearchNodeLimit = 7000;
+const privateOffsetSweepRadius = 12;
 
 type Rectangle = {
   id: string;
@@ -35,6 +39,7 @@ type RouteCandidate = {
   waypoints: DiagramPoint[];
   outerLane?: DiagramEdgeAnchorSide;
   outerLaneIndex?: number;
+  recovery?: boolean;
 };
 
 type AcceptedPath = {
@@ -48,9 +53,29 @@ type RouteHardFailureBreakdown = {
   hardFailures: number;
 };
 
+type RouteSelection = {
+  candidate: RouteCandidate;
+  hardFailures: number;
+  score: number;
+  validCandidates: number;
+  failureBreakdown: RouteHardFailureBreakdown;
+  recovered: boolean;
+};
+
 type TemplateRouteOptions = {
   includeOuterLanes: boolean;
   includeDividers: boolean;
+};
+
+type RouteRecoveryOptions = {
+  includeRecovery: boolean;
+  source: Rectangle;
+  target: Rectangle;
+  sourceAnchor: DiagramEdgeAnchor;
+  targetAnchor: DiagramEdgeAnchor;
+  bounds: { left: number; right: number; top: number; bottom: number };
+  outerLaneMargin: number;
+  onAttempt?: () => void;
 };
 
 export const templateOnlyRouteStrategy: RouteStrategy = {
@@ -92,6 +117,7 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
     ? planRoutingDividers([...anchoredEdgeById.values()], request.document.nodes, request.intent.routing.dividerThreshold, request)
     : [];
   const dividerEdgeIds = new Set(dividers.flatMap((divider) => divider.sourceEdgeIds));
+  acceptedPaths.push(...buildDividerOccupancyPaths(dividers, anchoredEdgeById, request.document.nodes, diagramBounds));
   const routePlans = assignments.map((assignment, assignmentIndex) => {
     const source = requireNodeRectangle(requireNode(nodeById, assignment.edge.sourceId));
     const target = requireNodeRectangle(requireNode(nodeById, assignment.edge.targetId));
@@ -108,7 +134,8 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
     );
 
     return { assignment, candidates };
-  });
+  }).sort((left, right) => routePlanDifficulty(right.assignment, request.document.nodes, assignments) - routePlanDifficulty(left.assignment, request.document.nodes, assignments) ||
+    left.assignment.edge.id.localeCompare(right.assignment.edge.id));
 
   request.context.run.logger.debug({
     phase: "route",
@@ -119,6 +146,12 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
       candidateCount: routePlans.reduce((total, plan) => total + plan.candidates.length, 0),
       includeOuterLanes: options.includeOuterLanes
     }
+  });
+  request.context.run.logger.debug({
+    phase: "route",
+    type: "route-order-selected",
+    message: `${routePlans.length} edges ordered for congestion-aware routing.`,
+    data: { edgeIds: routePlans.map((plan) => plan.assignment.edge.id) }
   });
 
   for (const { assignment, candidates } of routePlans) {
@@ -133,19 +166,44 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
       assignment.edge,
       candidates,
       request.document.nodes,
-      acceptedPaths
+      acceptedPaths,
+      {
+        includeRecovery: options.includeOuterLanes,
+        source: requireNodeRectangle(requireNode(nodeById, assignment.edge.sourceId)),
+        target: requireNodeRectangle(requireNode(nodeById, assignment.edge.targetId)),
+        sourceAnchor: assignment.sourceAnchor,
+        targetAnchor: assignment.targetAnchor,
+        bounds: diagramBounds,
+        outerLaneMargin: request.intent.routing.outerLaneMargin,
+        onAttempt: () => request.context.run.logger.debug({
+          phase: "route",
+          type: "routing-recovery-attempted",
+          message: `Sparse lane-graph recovery attempted for edge ${assignment.edge.id}.`,
+          edgeId: assignment.edge.id
+        })
+      }
     );
-    const segmentStrategy: DiagramRoutedEdgeSegmentStrategy = selected.validCandidates === 0
+    const segmentStrategy: DiagramRoutedEdgeSegmentStrategy = selected.hardFailures > 0
       ? "fallback"
-      : selected.candidate.outerLane
+      : selected.candidate.recovery
+        ? "corridor"
+        : selected.candidate.outerLane
         ? "outer-lane"
         : "corridor";
 
-    if (selected.validCandidates === 0) {
-      request.context.run.logger.warn({
+    if (selected.recovered) {
+      request.context.run.logger.debug({
         phase: "route",
-        type: "routing-fallback-used",
-        message: `No hard-valid template route found for edge ${assignment.edge.id}; selected best-effort route.`,
+        type: "routing-recovery-succeeded",
+        message: `Sparse lane-graph recovery selected for edge ${assignment.edge.id}.`,
+        edgeId: assignment.edge.id,
+        data: selected.failureBreakdown
+      });
+    } else if (selected.validCandidates === 0) {
+      request.context.run.logger.debug({
+        phase: "route",
+        type: "routing-recovery-failed",
+        message: `No hard-valid recovery route found for edge ${assignment.edge.id}; keeping best-effort route until final repair.`,
         edgeId: assignment.edge.id,
         data: selected.failureBreakdown
       });
@@ -177,6 +235,7 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
   const repaired = options.includeOuterLanes && request.intent.routing.maxRepairPasses > 0
     ? repairRoutedEdges(routedEdges, acceptedPaths, assignments, request, diagramBounds, segmentStrategyByEdgeId)
     : { edges: routedEdges, paths: acceptedPaths, accepted: 0, rejected: 0 };
+  emitFinalFallbackEvents(repaired.edges, repaired.paths, request, segmentStrategyByEdgeId);
   request.context.run.logger.debug({
     phase: "repair",
     type: "repair-complete",
@@ -217,8 +276,9 @@ function selectRouteCandidate(
   edge: DiagramEdge,
   candidates: RouteCandidate[],
   nodes: DiagramNode[],
-  acceptedPaths: AcceptedPath[]
-): { candidate: RouteCandidate; hardFailures: number; score: number; validCandidates: number; failureBreakdown: RouteHardFailureBreakdown } {
+  acceptedPaths: AcceptedPath[],
+  recovery?: RouteRecoveryOptions
+): RouteSelection {
   const scored = candidates.map((candidate) => ({
     candidate,
     failureBreakdown: routeHardFailureBreakdown(edge, candidate.points, nodes, acceptedPaths),
@@ -227,14 +287,64 @@ function selectRouteCandidate(
     ...candidate,
     hardFailures: candidate.failureBreakdown.hardFailures
   }));
-  const valid = scored.filter((candidate) => candidate.hardFailures === 0);
-  const selected = (valid.length > 0 ? valid : scored).reduce((best, candidate) =>
-    candidate.score < best.score ? candidate : best
-  );
+  const validTemplates = scored.filter((candidate) => candidate.hardFailures === 0);
+  const bestValidTemplate = validTemplates.length > 0
+    ? validTemplates.reduce((best, candidate) => candidate.score < best.score ? candidate : best)
+    : undefined;
+  const shouldTryRecovery = Boolean(recovery?.includeRecovery) &&
+    (!bestValidTemplate || countCrossingsWithAccepted(bestValidTemplate.candidate.points, acceptedPaths) > 0);
+  if (shouldTryRecovery) {
+    recovery?.onAttempt?.();
+  }
+  const recoveryScored = shouldTryRecovery && recovery
+    ? scoreRecoveryCandidate(edge, nodes, acceptedPaths, recovery)
+    : undefined;
+  const allScored = recoveryScored ? [...scored, recoveryScored] : scored;
+  const valid = allScored.filter((candidate) => candidate.hardFailures === 0);
+  if (valid.length > 0) {
+    const selected = valid.reduce((best, candidate) => candidate.score < best.score ? candidate : best);
+    return {
+      ...selected,
+      validCandidates: valid.length,
+      recovered: Boolean(selected.candidate.recovery)
+    };
+  }
+
+  const selected = allScored.reduce((best, candidate) => candidate.score < best.score ? candidate : best);
 
   return {
     ...selected,
-    validCandidates: valid.length
+    validCandidates: 0,
+    recovered: false
+  };
+}
+
+function scoreRecoveryCandidate(
+  edge: DiagramEdge,
+  nodes: DiagramNode[],
+  acceptedPaths: AcceptedPath[],
+  recovery: RouteRecoveryOptions
+): { candidate: RouteCandidate; failureBreakdown: RouteHardFailureBreakdown; hardFailures: number; score: number } | undefined {
+  const recovered = recoverSparseLaneRoute(
+    edge,
+    recovery.source,
+    recovery.target,
+    recovery.sourceAnchor,
+    recovery.targetAnchor,
+    recovery.bounds,
+    recovery.outerLaneMargin,
+    nodes,
+    acceptedPaths
+  );
+  if (!recovered) {
+    return undefined;
+  }
+  const failureBreakdown = routeHardFailureBreakdown(edge, recovered.points, nodes, acceptedPaths);
+  return {
+    candidate: recovered,
+    failureBreakdown,
+    hardFailures: failureBreakdown.hardFailures,
+    score: routeCost(edge, recovered, nodes, acceptedPaths)
   };
 }
 
@@ -286,7 +396,22 @@ function repairRoutedEdges(
           true
         ),
         request.document.nodes,
-        otherPaths
+        otherPaths,
+        {
+          includeRecovery: true,
+          source,
+          target,
+          sourceAnchor: assignment.sourceAnchor,
+          targetAnchor: assignment.targetAnchor,
+          bounds: diagramBounds,
+          outerLaneMargin: request.intent.routing.outerLaneMargin,
+          onAttempt: () => request.context.run.logger.debug({
+            phase: "repair",
+            type: "routing-recovery-attempted",
+            message: `Sparse lane-graph recovery attempted for edge ${edge.id} during repair.`,
+            edgeId: edge.id
+          })
+        }
       );
       const improvesHardFailureCount = selected.hardFailures < currentHardFailures;
       const improvesSoftCost =
@@ -308,7 +433,9 @@ function repairRoutedEdges(
         );
         segmentStrategyByEdgeId.set(edge.id, selected.hardFailures > 0
           ? "fallback"
-          : selected.candidate.outerLane
+          : selected.candidate.recovery
+            ? "corridor"
+            : selected.candidate.outerLane
             ? "outer-lane"
             : "corridor");
         acceptedInPass += 1;
@@ -347,6 +474,348 @@ function repairRoutedEdges(
   }
 
   return { edges: currentEdges, paths: currentPaths, accepted: totalAccepted, rejected: totalRejected };
+}
+
+function emitFinalFallbackEvents(
+  edges: DiagramEdge[],
+  paths: AcceptedPath[],
+  request: RouteRequest,
+  segmentStrategyByEdgeId: Map<string, DiagramRoutedEdgeSegmentStrategy>
+): void {
+  for (const edge of edges) {
+    if (segmentStrategyByEdgeId.get(edge.id) === "divider") {
+      continue;
+    }
+
+    const path = paths.find((candidate) => candidate.edge.id === edge.id);
+    if (!path) {
+      request.context.run.logger.warn({
+        phase: "route",
+        type: "routing-failed",
+        message: `No routed path produced for edge ${edge.id}.`,
+        edgeId: edge.id
+      });
+      continue;
+    }
+
+    const otherPaths = paths.filter((candidate) => candidate.edge.id !== edge.id);
+    const breakdown = routeHardFailureBreakdown(edge, path.points, request.document.nodes, otherPaths);
+    if (breakdown.hardFailures === 0 && segmentStrategyByEdgeId.get(edge.id) !== "fallback") {
+      continue;
+    }
+
+    request.context.run.logger.warn({
+      phase: "route",
+      type: "routing-fallback-used",
+      message: `Recovery routing failed for edge ${edge.id}; selected final best-effort route.`,
+      edgeId: edge.id,
+      data: breakdown
+    });
+  }
+}
+
+function routePlanDifficulty(
+  assignment: EdgeEndpointAssignment,
+  nodes: DiagramNode[],
+  assignments: EdgeEndpointAssignment[]
+): number {
+  const source = nodes.find((node) => node.id === assignment.edge.sourceId);
+  const target = nodes.find((node) => node.id === assignment.edge.targetId);
+  if (!source?.layout || !target?.layout) {
+    return 0;
+  }
+
+  const sourceRectangle = requireNodeRectangle(source);
+  const targetRectangle = requireNodeRectangle(target);
+  const sourceCenter = { x: centerX(sourceRectangle), y: centerY(sourceRectangle) };
+  const targetCenter = { x: centerX(targetRectangle), y: centerY(targetRectangle) };
+  const obstacleCount = nodes.filter((node) =>
+    node.id !== assignment.edge.sourceId &&
+    node.id !== assignment.edge.targetId &&
+    node.layout &&
+    segmentIntersectsRectangle(sourceCenter, targetCenter, expandRectangle(node.layout, laneGraphClearance / 2))
+  ).length;
+  const degree = assignments.filter((candidate) =>
+    candidate.edge.sourceId === assignment.edge.sourceId ||
+    candidate.edge.targetId === assignment.edge.sourceId ||
+    candidate.edge.sourceId === assignment.edge.targetId ||
+    candidate.edge.targetId === assignment.edge.targetId
+  ).length;
+  const distance = Math.abs(sourceCenter.x - targetCenter.x) + Math.abs(sourceCenter.y - targetCenter.y);
+
+  return obstacleCount * 1_000_000 + degree * 10_000 + distance;
+}
+
+function recoverSparseLaneRoute(
+  edge: DiagramEdge,
+  source: Rectangle,
+  target: Rectangle,
+  sourceAnchor: DiagramEdgeAnchor,
+  targetAnchor: DiagramEdgeAnchor,
+  bounds: { left: number; right: number; top: number; bottom: number },
+  outerLaneMargin: number,
+  nodes: DiagramNode[],
+  acceptedPaths: AcceptedPath[]
+): RouteCandidate | undefined {
+  const sourcePoint = anchorPoint(source, sourceAnchor);
+  const targetPoint = anchorPoint(target, targetAnchor);
+  const sourcePort = outsidePort(sourcePoint, sourceAnchor, 0);
+  const targetPort = outsidePort(targetPoint, targetAnchor, 0);
+  const xLines = boundedLaneLines(laneGraphXLines(sourcePort, targetPort, source, target, bounds, outerLaneMargin, nodes), sourcePort.x, targetPort.x);
+  const yLines = boundedLaneLines(laneGraphYLines(sourcePort, targetPort, source, target, bounds, outerLaneMargin, nodes), sourcePort.y, targetPort.y);
+
+  if (xLines.length * yLines.length > laneGraphSearchNodeLimit) {
+    return undefined;
+  }
+
+  const graph = buildLaneGraph(edge, xLines, yLines, nodes, acceptedPaths);
+  const startKey = pointKey(sourcePort);
+  const endKey = pointKey(targetPort);
+  if (!graph.points.has(startKey) || !graph.points.has(endKey)) {
+    return undefined;
+  }
+
+  const path = shortestLanePath(graph, startKey, endKey);
+  if (!path) {
+    return undefined;
+  }
+
+  return {
+    ...pointsToRoute([sourcePoint, ...path, targetPoint]),
+    recovery: true
+  };
+}
+
+function laneGraphXLines(
+  sourcePort: DiagramPoint,
+  targetPort: DiagramPoint,
+  source: Rectangle,
+  target: Rectangle,
+  bounds: { left: number; right: number; top: number; bottom: number },
+  outerLaneMargin: number,
+  nodes: DiagramNode[]
+): number[] {
+  const lines = [
+    sourcePort.x,
+    targetPort.x,
+    (sourcePort.x + targetPort.x) / 2,
+    source.x - laneGraphClearance,
+    source.x + source.width + laneGraphClearance,
+    target.x - laneGraphClearance,
+    target.x + target.width + laneGraphClearance,
+    bounds.left - outerLaneMargin,
+    bounds.right + outerLaneMargin
+  ];
+
+  for (let index = 1; index <= 4; index += 1) {
+    lines.push(bounds.left - outerLaneMargin - index * anchorStubDistance);
+    lines.push(bounds.right + outerLaneMargin + index * anchorStubDistance);
+  }
+
+  for (const node of nodes) {
+    if (!node.layout) {
+      continue;
+    }
+    lines.push(node.layout.x - laneGraphClearance);
+    lines.push(node.layout.x + node.layout.width + laneGraphClearance);
+    lines.push(node.layout.x + node.layout.width / 2);
+  }
+
+  for (const offset of deterministicPrivateOffsets(`${source.id}:${target.id}`, 0)) {
+    lines.push(sourcePort.x + offset);
+    lines.push(targetPort.x + offset);
+    lines.push((sourcePort.x + targetPort.x) / 2 + offset);
+  }
+
+  return uniqueSortedNumbers(lines);
+}
+
+function laneGraphYLines(
+  sourcePort: DiagramPoint,
+  targetPort: DiagramPoint,
+  source: Rectangle,
+  target: Rectangle,
+  bounds: { left: number; right: number; top: number; bottom: number },
+  outerLaneMargin: number,
+  nodes: DiagramNode[]
+): number[] {
+  const lines = [
+    sourcePort.y,
+    targetPort.y,
+    (sourcePort.y + targetPort.y) / 2,
+    source.y - laneGraphClearance,
+    source.y + source.height + laneGraphClearance,
+    target.y - laneGraphClearance,
+    target.y + target.height + laneGraphClearance,
+    bounds.top - outerLaneMargin,
+    bounds.bottom + outerLaneMargin
+  ];
+
+  for (let index = 1; index <= 4; index += 1) {
+    lines.push(bounds.top - outerLaneMargin - index * anchorStubDistance);
+    lines.push(bounds.bottom + outerLaneMargin + index * anchorStubDistance);
+  }
+
+  for (const node of nodes) {
+    if (!node.layout) {
+      continue;
+    }
+    lines.push(node.layout.y - laneGraphClearance);
+    lines.push(node.layout.y + node.layout.height + laneGraphClearance);
+    lines.push(node.layout.y + node.layout.height / 2);
+  }
+
+  for (const offset of deterministicPrivateOffsets(`${source.id}:${target.id}`, 0)) {
+    lines.push(sourcePort.y + offset);
+    lines.push(targetPort.y + offset);
+    lines.push((sourcePort.y + targetPort.y) / 2 + offset);
+  }
+
+  return uniqueSortedNumbers(lines);
+}
+
+function boundedLaneLines(lines: number[], start: number, end: number): number[] {
+  const sorted = uniqueSortedNumbers([...lines, start, end]);
+  if (sorted.length <= laneGraphMaxLinesPerAxis) {
+    return sorted;
+  }
+
+  const center = (start + end) / 2;
+  const required = new Set([roundCoordinate(start), roundCoordinate(end)]);
+  return sorted
+    .map((value) => ({ value, required: required.has(roundCoordinate(value)), distance: Math.min(Math.abs(value - start), Math.abs(value - end), Math.abs(value - center)) }))
+    .sort((left, right) => Number(right.required) - Number(left.required) || left.distance - right.distance || left.value - right.value)
+    .slice(0, laneGraphMaxLinesPerAxis)
+    .map((entry) => entry.value)
+    .sort((left, right) => left - right);
+}
+
+function buildLaneGraph(
+  edge: DiagramEdge,
+  xLines: number[],
+  yLines: number[],
+  nodes: DiagramNode[],
+  acceptedPaths: AcceptedPath[]
+): { points: Map<string, DiagramPoint>; adjacency: Map<string, Array<{ key: string; axis: "h" | "v"; length: number; crossings: number }>> } {
+  const points = new Map<string, DiagramPoint>();
+  const adjacency = new Map<string, Array<{ key: string; axis: "h" | "v"; length: number; crossings: number }>>();
+
+  for (const x of xLines) {
+    for (const y of yLines) {
+      const point = { x, y };
+      if (pointInsideBlockedNode(edge, point, nodes)) {
+        continue;
+      }
+      points.set(pointKey(point), point);
+    }
+  }
+
+  for (const x of xLines) {
+    const column = yLines
+      .map((y) => points.get(pointKey({ x, y })))
+      .filter((point): point is DiagramPoint => Boolean(point))
+      .sort((left, right) => left.y - right.y);
+    connectAdjacentLanePoints(edge, column, "v", nodes, acceptedPaths, adjacency);
+  }
+
+  for (const y of yLines) {
+    const row = xLines
+      .map((x) => points.get(pointKey({ x, y })))
+      .filter((point): point is DiagramPoint => Boolean(point))
+      .sort((left, right) => left.x - right.x);
+    connectAdjacentLanePoints(edge, row, "h", nodes, acceptedPaths, adjacency);
+  }
+
+  return { points, adjacency };
+}
+
+function connectAdjacentLanePoints(
+  edge: DiagramEdge,
+  points: DiagramPoint[],
+  axis: "h" | "v",
+  nodes: DiagramNode[],
+  acceptedPaths: AcceptedPath[],
+  adjacency: Map<string, Array<{ key: string; axis: "h" | "v"; length: number; crossings: number }>>
+): void {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (laneSegmentBlocked(edge, start, end, nodes, acceptedPaths)) {
+      continue;
+    }
+    const startKey = pointKey(start);
+    const endKey = pointKey(end);
+    const length = Math.abs(start.x - end.x) + Math.abs(start.y - end.y);
+    const crossings = segmentCrossingsWithAccepted(start, end, acceptedPaths);
+    adjacency.set(startKey, [...(adjacency.get(startKey) ?? []), { key: endKey, axis, length, crossings }]);
+    adjacency.set(endKey, [...(adjacency.get(endKey) ?? []), { key: startKey, axis, length, crossings }]);
+  }
+}
+
+function shortestLanePath(
+  graph: { points: Map<string, DiagramPoint>; adjacency: Map<string, Array<{ key: string; axis: "h" | "v"; length: number; crossings: number }>> },
+  startKey: string,
+  endKey: string
+): DiagramPoint[] | undefined {
+  type State = { key: string; axis: "h" | "v" | "none" };
+  const startState: State = { key: startKey, axis: "none" };
+  const distances = new Map<string, number>([[stateKey(startState), 0]]);
+  const previous = new Map<string, string>();
+  const queue: Array<{ state: State; priority: number }> = [{ state: startState, priority: 0 }];
+  let bestEndState: string | undefined;
+
+  while (queue.length > 0) {
+    queue.sort((left, right) => left.priority - right.priority);
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+    const currentStateKey = stateKey(current.state);
+    const currentDistance = distances.get(currentStateKey);
+    if (currentDistance === undefined || current.priority > currentDistance + epsilon) {
+      continue;
+    }
+    if (current.state.key === endKey) {
+      bestEndState = currentStateKey;
+      break;
+    }
+
+    for (const edge of graph.adjacency.get(current.state.key) ?? []) {
+      const nextState: State = { key: edge.key, axis: edge.axis };
+      const bendCost = current.state.axis !== "none" && current.state.axis !== edge.axis ? 10_000 : 0;
+      const nextDistance = currentDistance + edge.length + bendCost + edge.crossings * 1_000_000;
+      const nextKey = stateKey(nextState);
+      if (nextDistance + epsilon >= (distances.get(nextKey) ?? Number.POSITIVE_INFINITY)) {
+        continue;
+      }
+      distances.set(nextKey, nextDistance);
+      previous.set(nextKey, currentStateKey);
+      queue.push({ state: nextState, priority: nextDistance });
+    }
+  }
+
+  if (!bestEndState) {
+    return undefined;
+  }
+
+  const keys: string[] = [];
+  let cursor: string | undefined = bestEndState;
+  while (cursor) {
+    keys.push(cursor.split("|")[0]);
+    cursor = previous.get(cursor);
+  }
+
+  return keys.reverse().map((key) => {
+    const point = graph.points.get(key);
+    if (!point) {
+      throw new Error(`Missing lane graph point ${key}.`);
+    }
+    return point;
+  });
+}
+
+function stateKey(state: { key: string; axis: "h" | "v" | "none" }): string {
+  return `${state.key}|${state.axis}`;
 }
 
 function assignAnchors(edges: DiagramEdge[], nodeById: Map<string, DiagramNode>): EdgeEndpointAssignment[] {
@@ -679,13 +1148,19 @@ function applyEngineOwnedRoutedSegments(
 ): DiagramEdge[] {
   const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
   const segmentsByEdgeId = new Map<string, DiagramRoutedEdgeSegment[]>();
+  const dividerEdgeIds = new Set(dividers.flatMap((divider) => divider.sourceEdgeIds));
+  const occupancy: AcceptedPath[] = edges
+    .filter((edge) => !dividerEdgeIds.has(edge.id))
+    .map((edge) => ({ edge, points: edgeRoutePoints(edge, nodes) }))
+    .filter((path) => path.points.length >= 2);
+  const bounds = rectangleBounds(nodes.map((node) => requireNodeRectangle(node)));
 
   for (const divider of dividers) {
     const dividerEdges = divider.sourceEdgeIds
       .map((edgeId) => edgeById.get(edgeId))
       .filter((edge): edge is DiagramEdge => Boolean(edge));
 
-    for (const { edge, segment } of splitDividerSegments(divider, dividerEdges, nodes)) {
+    for (const { edge, segment } of splitDividerSegments(divider, dividerEdges, nodes, occupancy, bounds)) {
       segmentsByEdgeId.set(edge.id, [...(segmentsByEdgeId.get(edge.id) ?? []), segment]);
     }
   }
@@ -701,6 +1176,22 @@ function applyEngineOwnedRoutedSegments(
       }
     };
   });
+}
+
+function buildDividerOccupancyPaths(
+  dividers: DiagramRoutingDivider[],
+  edgeById: Map<string, DiagramEdge>,
+  nodes: DiagramNode[],
+  bounds: { left: number; right: number; top: number; bottom: number }
+): AcceptedPath[] {
+  const occupancy: AcceptedPath[] = [];
+  for (const divider of dividers) {
+    const dividerEdges = divider.sourceEdgeIds
+      .map((edgeId) => edgeById.get(edgeId))
+      .filter((edge): edge is DiagramEdge => Boolean(edge));
+    splitDividerSegments(divider, dividerEdges, nodes, occupancy, bounds);
+  }
+  return occupancy;
 }
 
 function directRoutedSegment(edge: DiagramEdge, strategy: DiagramRoutedEdgeSegmentStrategy): DiagramRoutedEdgeSegment {
@@ -720,25 +1211,29 @@ function directRoutedSegment(edge: DiagramEdge, strategy: DiagramRoutedEdgeSegme
 function splitDividerSegments(
   divider: DiagramRoutingDivider,
   edges: DiagramEdge[],
-  nodes: DiagramNode[]
-): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment }> {
+  nodes: DiagramNode[],
+  occupancy: AcceptedPath[],
+  bounds: { left: number; right: number; top: number; bottom: number }
+): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment; points: DiagramPoint[] }> {
   return divider.mode === "fanOut"
-    ? fanOutDividerSegments(divider, edges, nodes)
-    : fanInDividerSegments(divider, edges, nodes);
+    ? fanOutDividerSegments(divider, edges, nodes, occupancy, bounds)
+    : fanInDividerSegments(divider, edges, nodes, occupancy, bounds);
 }
 
 function fanOutDividerSegments(
   divider: DiagramRoutingDivider,
   edges: DiagramEdge[],
-  nodes: DiagramNode[]
-): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment }> {
+  nodes: DiagramNode[],
+  occupancy: AcceptedPath[],
+  bounds: { left: number; right: number; top: number; bottom: number }
+): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment; points: DiagramPoint[] }> {
   if (edges.length === 0) {
     return [];
   }
   const firstEdge = edges[0];
   const sourceAnchor = sharedClassAnchor(edges, "source") ?? classAnchorTowardDivider(firstEdge, "source", divider);
   const dividerInputAnchor = dividerOuterAnchor(divider);
-  const orderedLeaves = orderEdgesForDivider(divider, edges, "target", oppositeSide(divider.side));
+  const orderedLeaves = orderEdgesForDivider(divider, edges, "target", oppositeSide(divider.side), nodes);
   const trunk = createDividerSegment({
     edge: firstEdge,
     segmentId: `${firstEdge.id}:divider-trunk`,
@@ -749,14 +1244,19 @@ function fanOutDividerSegments(
     targetAnchor: dividerInputAnchor,
     markerPolicy: { start: true, end: false },
     nodes,
-    divider
+    divider,
+    occupancy,
+    bounds
+  });
+  occupancy.push({
+    edge: { ...firstEdge, id: trunk.segment.id, sourceId: trunk.segment.sourceId, targetId: trunk.segment.targetId },
+    points: trunk.points
   });
 
   return [
-    { edge: firstEdge, segment: trunk },
-    ...orderedLeaves.map(({ edge, dividerAnchor }) => ({
-      edge,
-      segment: createDividerSegment({
+    { edge: firstEdge, segment: trunk.segment, points: trunk.points },
+    ...orderedLeaves.map(({ edge, dividerAnchor }) => {
+      const leaf = createDividerSegment({
         edge,
         segmentId: `${edge.id}:divider-leaf`,
         sourceId: divider.id,
@@ -766,29 +1266,37 @@ function fanOutDividerSegments(
         targetAnchor: classAnchorForDividerSide(edge, "target", dividerAnchor.side),
         markerPolicy: { start: false, end: true },
         nodes,
-        divider
-      })
-    }))
+        divider,
+        occupancy,
+        bounds
+      });
+      occupancy.push({
+        edge: { ...edge, id: leaf.segment.id, sourceId: leaf.segment.sourceId, targetId: leaf.segment.targetId },
+        points: leaf.points
+      });
+      return { edge, segment: leaf.segment, points: leaf.points };
+    })
   ];
 }
 
 function fanInDividerSegments(
   divider: DiagramRoutingDivider,
   edges: DiagramEdge[],
-  nodes: DiagramNode[]
-): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment }> {
+  nodes: DiagramNode[],
+  occupancy: AcceptedPath[],
+  bounds: { left: number; right: number; top: number; bottom: number }
+): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment; points: DiagramPoint[] }> {
   if (edges.length === 0) {
     return [];
   }
   const firstEdge = edges[0];
   const targetAnchor = sharedClassAnchor(edges, "target") ?? classAnchorTowardDivider(firstEdge, "target", divider);
   const dividerOutputAnchor = dividerOuterAnchor(divider);
-  const orderedLeaves = orderEdgesForDivider(divider, edges, "source", oppositeSide(divider.side));
+  const orderedLeaves = orderEdgesForDivider(divider, edges, "source", oppositeSide(divider.side), nodes);
 
   return [
-    ...orderedLeaves.map(({ edge, dividerAnchor }) => ({
-      edge,
-      segment: createDividerSegment({
+    ...orderedLeaves.map(({ edge, dividerAnchor }) => {
+      const leaf = createDividerSegment({
         edge,
         segmentId: `${edge.id}:divider-leaf`,
         sourceId: edge.sourceId,
@@ -798,12 +1306,18 @@ function fanInDividerSegments(
         targetAnchor: dividerAnchor,
         markerPolicy: { start: true, end: false },
         nodes,
-        divider
-      })
-    })),
-    {
-      edge: firstEdge,
-      segment: createDividerSegment({
+        divider,
+        occupancy,
+        bounds
+      });
+      occupancy.push({
+        edge: { ...edge, id: leaf.segment.id, sourceId: leaf.segment.sourceId, targetId: leaf.segment.targetId },
+        points: leaf.points
+      });
+      return { edge, segment: leaf.segment, points: leaf.points };
+    }),
+    (() => {
+      const trunk = createDividerSegment({
         edge: firstEdge,
         segmentId: `${firstEdge.id}:divider-trunk`,
         sourceId: divider.id,
@@ -813,9 +1327,16 @@ function fanInDividerSegments(
         targetAnchor,
         markerPolicy: { start: false, end: true },
         nodes,
-        divider
-      })
-    }
+        divider,
+        occupancy,
+        bounds
+      });
+      occupancy.push({
+        edge: { ...firstEdge, id: trunk.segment.id, sourceId: trunk.segment.sourceId, targetId: trunk.segment.targetId },
+        points: trunk.points
+      });
+      return { edge: firstEdge, segment: trunk.segment, points: trunk.points };
+    })()
   ];
 }
 
@@ -830,23 +1351,70 @@ function createDividerSegment(input: {
   markerPolicy: { start: boolean; end: boolean };
   nodes: DiagramNode[];
   divider: DiagramRoutingDivider;
-}): DiagramRoutedEdgeSegment {
-  return {
+  occupancy: AcceptedPath[];
+  bounds: { left: number; right: number; top: number; bottom: number };
+}): { segment: DiagramRoutedEdgeSegment; points: DiagramPoint[] } {
+  const source = endpointRectangle(input.sourceId, input.nodes, input.divider);
+  const target = endpointRectangle(input.targetId, input.nodes, input.divider);
+  const segmentEdge = {
+    ...input.edge,
     id: input.segmentId,
     sourceId: input.sourceId,
-    targetId: input.targetId,
-    label: input.label,
-    sourceAnchor: input.sourceAnchor,
-    targetAnchor: input.targetAnchor,
-    waypoints: simpleSplitWaypoints(
-      endpointRectangle(input.sourceId, input.nodes, input.divider),
-      endpointRectangle(input.targetId, input.nodes, input.divider),
-      input.sourceAnchor,
-      input.targetAnchor
-    ),
-    markerPolicy: input.markerPolicy,
-    strategy: "divider"
+    targetId: input.targetId
   };
+  const selected = selectRouteCandidate(
+    segmentEdge,
+    routeCandidatesForAnchors(
+      input.segmentId,
+      stableHash(input.segmentId) % 997,
+      source,
+      target,
+      input.sourceAnchor,
+      input.targetAnchor,
+      input.bounds,
+      Math.max(anchorStubDistance * 4, laneGraphClearance * 2),
+      true
+    ),
+    input.nodes,
+    input.occupancy,
+    {
+      includeRecovery: true,
+      source,
+      target,
+      sourceAnchor: input.sourceAnchor,
+      targetAnchor: input.targetAnchor,
+      bounds: input.bounds,
+      outerLaneMargin: Math.max(anchorStubDistance * 4, laneGraphClearance * 2)
+    }
+  );
+
+  return {
+    segment: {
+      id: input.segmentId,
+      sourceId: input.sourceId,
+      targetId: input.targetId,
+      label: input.label,
+      sourceAnchor: input.sourceAnchor,
+      targetAnchor: input.targetAnchor,
+      waypoints: selected.candidate.waypoints,
+      markerPolicy: input.markerPolicy,
+      strategy: "divider"
+    },
+    points: selected.candidate.points
+  };
+}
+
+function edgeRoutePoints(edge: DiagramEdge, nodes: DiagramNode[]): DiagramPoint[] {
+  const source = nodes.find((node) => node.id === edge.sourceId);
+  const target = nodes.find((node) => node.id === edge.targetId);
+  if (!source?.layout || !target?.layout || !edge.layout?.sourceAnchor || !edge.layout.targetAnchor) {
+    return [];
+  }
+  return [
+    anchorPoint(requireNodeRectangle(source), edge.layout.sourceAnchor),
+    ...(edge.layout.waypoints ?? []),
+    anchorPoint(requireNodeRectangle(target), edge.layout.targetAnchor)
+  ];
 }
 
 function endpointRectangle(endpointId: string, nodes: DiagramNode[], divider: DiagramRoutingDivider): Rectangle {
@@ -888,10 +1456,11 @@ function orderEdgesForDivider(
   divider: DiagramRoutingDivider,
   edges: DiagramEdge[],
   classEndpoint: "source" | "target",
-  dividerSide: DiagramEdgeAnchorSide
+  dividerSide: DiagramEdgeAnchorSide,
+  nodes: DiagramNode[]
 ): Array<{ edge: DiagramEdge; dividerAnchor: DiagramEdgeAnchor }> {
   const sorted = [...edges].sort((left, right) =>
-    dividerSortCoordinate(left, classEndpoint) - dividerSortCoordinate(right, classEndpoint) ||
+    dividerSortCoordinate(left, classEndpoint, divider, nodes) - dividerSortCoordinate(right, classEndpoint, divider, nodes) ||
     left.id.localeCompare(right.id)
   );
 
@@ -904,9 +1473,17 @@ function orderEdgesForDivider(
   }));
 }
 
-function dividerSortCoordinate(edge: DiagramEdge, classEndpoint: "source" | "target"): number {
-  const anchor = classEndpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
-  return anchor?.ratio ?? 0.5;
+function dividerSortCoordinate(edge: DiagramEdge, classEndpoint: "source" | "target", divider: DiagramRoutingDivider, nodes: DiagramNode[]): number {
+  const nodeId = classEndpoint === "source" ? edge.sourceId : edge.targetId;
+  const node = nodes.find((candidate) => candidate.id === nodeId);
+  if (!node?.layout) {
+    const anchor = classEndpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
+    return anchor?.ratio ?? 0.5;
+  }
+
+  return divider.orientation === "vertical"
+    ? centerY(requireNodeRectangle(node))
+    : centerX(requireNodeRectangle(node));
 }
 
 function dividerOuterAnchor(divider: DiagramRoutingDivider): DiagramEdgeAnchor {
@@ -972,7 +1549,13 @@ function deterministicPrivateOffsets(edgeId: string, edgeIndex: number): number[
   const step = anchorStubDistance;
   const bias = ((stableHash(edgeId) + edgeIndex) % 5) - 2;
   const base = bias * step;
-  const offsets = [base, 0, step, -step, step * 2, -step * 2, step * 3, -step * 3, step * 4, -step * 4];
+  const offsets = [base, 0];
+  for (let index = 1; index <= privateOffsetSweepRadius; index += 1) {
+    offsets.push(base + step * index);
+    offsets.push(base - step * index);
+    offsets.push(step * index);
+    offsets.push(-step * index);
+  }
   return [...new Set(offsets)];
 }
 
@@ -995,6 +1578,81 @@ function oppositeSide(side: DiagramEdgeAnchorSide): DiagramEdgeAnchorSide {
     return "east";
   }
   return "west";
+}
+
+function uniqueSortedNumbers(values: number[]): number[] {
+  return [...new Set(values.filter(Number.isFinite).map(roundCoordinate))].sort((left, right) => left - right);
+}
+
+function roundCoordinate(value: number): number {
+  return Number(value.toFixed(3));
+}
+
+function pointKey(point: DiagramPoint): string {
+  return `${roundCoordinate(point.x)},${roundCoordinate(point.y)}`;
+}
+
+function expandRectangle(rectangle: { x: number; y: number; width: number; height: number }, clearance: number): { x: number; y: number; width: number; height: number } {
+  return {
+    x: rectangle.x - clearance,
+    y: rectangle.y - clearance,
+    width: rectangle.width + clearance * 2,
+    height: rectangle.height + clearance * 2
+  };
+}
+
+function pointInsideBlockedNode(edge: DiagramEdge, point: DiagramPoint, nodes: DiagramNode[]): boolean {
+  return nodes.some((node) => {
+    if (node.id === edge.sourceId || node.id === edge.targetId || !node.layout) {
+      return false;
+    }
+    const rect = expandRectangle(node.layout, laneGraphClearance);
+    return point.x > rect.x && point.x < rect.x + rect.width && point.y > rect.y && point.y < rect.y + rect.height;
+  });
+}
+
+function laneSegmentBlocked(edge: DiagramEdge, start: DiagramPoint, end: DiagramPoint, nodes: DiagramNode[], acceptedPaths: AcceptedPath[]): boolean {
+  if (pointsEqual(start, end)) {
+    return true;
+  }
+
+  for (const node of nodes) {
+    if (node.id === edge.sourceId || node.id === edge.targetId || !node.layout) {
+      continue;
+    }
+    if (segmentIntersectsRectangle(start, end, expandRectangle(node.layout, laneGraphClearance))) {
+      return true;
+    }
+  }
+
+  for (const accepted of acceptedPaths) {
+    for (const [acceptedStart, acceptedEnd] of pathSegments(accepted.points)) {
+      if (segmentsOverlap(start, end, acceptedStart, acceptedEnd)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function segmentCrossingsWithAccepted(start: DiagramPoint, end: DiagramPoint, acceptedPaths: AcceptedPath[]): number {
+  let crossings = 0;
+  for (const accepted of acceptedPaths) {
+    for (const [acceptedStart, acceptedEnd] of pathSegments(accepted.points)) {
+      if (
+        !segmentsOverlap(start, end, acceptedStart, acceptedEnd) &&
+        segmentsIntersect(start, end, acceptedStart, acceptedEnd) &&
+        !pointsEqual(start, acceptedStart) &&
+        !pointsEqual(start, acceptedEnd) &&
+        !pointsEqual(end, acceptedStart) &&
+        !pointsEqual(end, acceptedEnd)
+      ) {
+        crossings += 1;
+      }
+    }
+  }
+  return crossings;
 }
 
 function countEdgeNodeHits(edge: DiagramEdge, points: DiagramPoint[], nodes: DiagramNode[]): number {

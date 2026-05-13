@@ -1,6 +1,6 @@
 # Logging And Run Reports
 
-Routing v2 emits `LayoutLogEvent` entries for conversion, defaulting, deprecated field conversion, route selection, fallback, divider decisions, outer lane usage, repair attempts, and hard validation failures.
+Routing v2 emits `LayoutLogEvent` entries for conversion, defaulting, deprecated field conversion, generated-layout candidate evaluation, route ordering, route selection, recovery, final fallback, divider decisions, outer lane usage, repair attempts, and hard validation failures.
 
 Default reports include warnings and errors. Trace is included only when requested by CLI/web options. Human-readable warning and error messages are preserved, while structured diagnostics are added for tools that need actionable routing data.
 
@@ -68,10 +68,14 @@ Routing v2 emits events in this order for the core route lifecycle:
 
 ```text
 route-strategy-selected
+generated-layout-candidate-evaluated
 route-candidates-generated
+routing-recovery-attempted | routing-recovery-succeeded | routing-recovery-failed
 repair-complete
 route-validation-passed | route-validation-failed
 route-complete
 ```
 
 `route-complete` must include the validation status in event data and must not be emitted before validation.
+
+`routing-fallback-used` is reserved for final unrecovered routes after recovery and repair have failed. Intermediate failed candidates are trace/debug recovery events, not final warning/error diagnostics.

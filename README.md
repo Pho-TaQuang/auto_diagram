@@ -228,7 +228,7 @@ npm run layout:init -- docs/demo_mermaid.md -o out/demo.routing-v3.json --engine
 npm run generate -- docs/demo_mermaid.md -o out/demo-v2.drawio --engine v2 --layout out/demo.routing-v3.json
 ```
 
-When `generate --engine v2` is selected explicitly, the CLI uses the strongest currently implemented v2 route strategy: template routing with outer lanes, routing dividers, repair, and hard validation reporting. This is not a full lane-graph or A* router.
+When `generate --engine v2` is selected explicitly, the CLI uses the strongest currently implemented v2 route strategy: template routing with private offset sweeps, outer lanes, routing dividers, sparse lane-graph recovery, local repair, generated-layout optimization, and hard validation reporting. This is a bounded sparse lane graph, not a dense grid A* router.
 
 Routing v2 can emit structured run reports:
 

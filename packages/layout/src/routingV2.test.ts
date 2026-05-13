@@ -10,6 +10,7 @@ import {
   resolveLayoutEngineOptions,
   validateRoutedDocument,
   type CoordinateRoutingLayoutV3,
+  type LayoutEngineResult,
   type LayoutEngineOptions
 } from "./index.js";
 import type { LayoutRunContext } from "./engine/LayoutEngine.js";
@@ -22,6 +23,7 @@ export function runRoutingV2Tests(): void {
   runRoutingV2Slice4ATests();
   runRoutingV2Slice4BTests();
   runRoutingV2Slice5ATests();
+  runRoutingV2Slice5BTests();
 }
 
 export function runRoutingV2Slice1Tests(): void {
@@ -69,7 +71,12 @@ export function runRoutingV2Slice5ATests(): void {
   terminalStubsMoveOutsideNodes();
   privateOffsetsAvoidSegmentOverlap();
   cleanCandidatePreferredOverDirtyCandidate();
-  fallbackRouteMarksHardInvalid();
+  recoveryAvoidsFormerBestEffortFallback();
+}
+
+export function runRoutingV2Slice5BTests(): void {
+  generatedDemoFixtureReachesStrictGoldenRoutingTarget();
+  renamedGeneratedDemoTopologyAlsoReachesStrictGoldenRoutingTarget();
 }
 
 function registryRejectsUnknownEngine(): void {
@@ -478,12 +485,69 @@ function cleanCandidatePreferredOverDirtyCandidate(): void {
   assert.equal(result.report.trace?.some((event) => event.type === "routing-fallback-used"), false);
 }
 
-function fallbackRouteMarksHardInvalid(): void {
+function recoveryAvoidsFormerBestEffortFallback(): void {
   const result = runManualV2(fanOutFixture(4), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
 
   assert.ok(result.document.edges.some((edge) => (edge.layout?.routedSegments?.length ?? 0) > 0));
-  assert.equal(result.report.trace?.some((event) => event.type === "routing-fallback-used"), true);
-  assert.equal(result.report.routingSummary?.hardValid, false);
+  assert.equal(result.report.trace?.some((event) => event.type === "routing-fallback-used"), false);
+  assert.equal(result.report.routingSummary?.hardValid, true);
+}
+
+function generatedDemoFixtureReachesStrictGoldenRoutingTarget(): void {
+  const parsed = parseMermaidClassDiagram(readFileSync("docs/demo_mermaid.md", "utf8"));
+  const result = createDefaultLayoutEngineRegistry().get("suggest-initial-v2").run({
+    document: parsed,
+    mode: "suggest-initial-v2",
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+
+  assertStrictGoldenRoutingTarget(result);
+  assert.ok(result.report.trace?.some((event) => event.type === "generated-layout-candidate-evaluated"));
+  assert.ok(result.report.trace?.some((event) => event.type === "route-order-selected"));
+}
+
+function renamedGeneratedDemoTopologyAlsoReachesStrictGoldenRoutingTarget(): void {
+  const parsed = parseMermaidClassDiagram(renamedDemoMermaid());
+  const result = createDefaultLayoutEngineRegistry().get("suggest-initial-v2").run({
+    document: parsed,
+    mode: "suggest-initial-v2",
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+
+  assertStrictGoldenRoutingTarget(result);
+}
+
+function assertStrictGoldenRoutingTarget(result: LayoutEngineResult): void {
+  const summary = result.report.routingSummary;
+  assert.ok(summary);
+  assert.equal(summary.hardValid, true);
+  assert.equal(summary.edgeNodeHits, 0);
+  assert.equal(summary.illegalSegmentOverlaps, 0);
+  assert.equal(summary.routingFailures, 0);
+  assert.equal(result.report.edgeValidations?.some((edge) => edge.routingFallbackUsed), false);
+  assert.equal(summary.edgeCrossings, 0);
+  assert.equal(summary.invalidDividers, 0);
+  assert.equal(summary.edgeIdentityViolations, 0);
+}
+
+function renamedDemoMermaid(): string {
+  const replacements: Array<[RegExp, string]> = [
+    [/\bDmPhuongTienController\b/g, "AlphaController"],
+    [/\bIDmPhuongTienManager\b/g, "IAlphaManager"],
+    [/\bDmPhuongTienManager\b/g, "AlphaManager"],
+    [/\bDataAccessAdapterFactory\b/g, "StorageFactory"],
+    [/\bDataAccessAdapter\b/g, "StorageAdapter"],
+    [/\bSysdmLoaiLucLuongEntity\b/g, "PrimaryEntity"],
+    [/\bSysdmPhuongTienEntity\b/g, "SecondaryEntity"],
+    [/\bDmPhuongTienModel\b/g, "AlphaModel"],
+    [/\bDmPhuongTienPageModel\b/g, "AlphaPageModel"],
+    [/\bSysQlpaModel_LoaiLucLuongOptionModel\b/g, "OptionModel"],
+    [/\bPageModel\b/g, "BasePageModel"]
+  ];
+  return replacements.reduce(
+    (source, [pattern, replacement]) => source.replace(pattern, replacement),
+    readFileSync("docs/demo_mermaid.md", "utf8")
+  );
 }
 
 function createContext(logger: MemoryLayoutLogger): LayoutRunContext {

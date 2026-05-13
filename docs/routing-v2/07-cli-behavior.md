@@ -28,7 +28,7 @@ For `generate --engine v2`, the CLI passes the strongest currently implemented v
 }
 ```
 
-This enables template routing, outer lanes, dividers, repair, and validation summary for explicit v2 runs only. The default CLI path remains legacy until Slice 8.
+This enables template routing, private offset sweeps, outer lanes, dividers, sparse lane-graph recovery, repair, generated-layout optimization for generated v2 runs, and validation summary for explicit v2 runs only. The default CLI path remains legacy until Slice 8.
 
 The CLI writes `.drawio` output even when `routingSummary.hardValid` is `false`. Hard validation failures are surfaced through default warnings/errors, structured diagnostics, per-edge validation results, and optional report JSON instead of failing generation at runtime.
 
