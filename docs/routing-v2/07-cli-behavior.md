@@ -30,4 +30,22 @@ For `generate --engine v2`, the CLI passes the strongest currently implemented v
 
 This enables template routing, outer lanes, dividers, repair, and validation summary for explicit v2 runs only. The default CLI path remains legacy until Slice 8.
 
-The CLI writes `.drawio` output even when `routingSummary.hardValid` is `false`. Hard validation failures are surfaced through default warnings/errors, diagnostics, and optional report JSON instead of failing generation at runtime.
+The CLI writes `.drawio` output even when `routingSummary.hardValid` is `false`. Hard validation failures are surfaced through default warnings/errors, structured diagnostics, per-edge validation results, and optional report JSON instead of failing generation at runtime.
+
+Example hard diagnostic:
+
+```text
+Error: Routing hard validation failed. Reason: illegal-segment-overlap. Edges: edge_11_A_B, edge_12_C_D. Suggested fix: increase horizontal gap between Controller and DTO by 120px, or route one edge through the north outer lane.
+```
+
+Example node-hit diagnostic:
+
+```text
+Error: Routing hard validation failed. Reason: edge-node-hit. Edges: edge_4_Manager_AdapterFactory. Suggested fix: move AdapterFactory to the right, or increase vertical gap below Manager by 260px.
+```
+
+Crossing-only diagnostics are warnings and do not make `routingSummary.hardValid` false:
+
+```text
+Warning: Edge crossing remains. Edges: edge_11_A_B, edge_13_C_D. Suggested fix: move DTO down by 120px or reorder nodes in Model.
+```

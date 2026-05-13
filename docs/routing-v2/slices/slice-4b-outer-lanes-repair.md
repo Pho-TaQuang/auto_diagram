@@ -14,7 +14,7 @@ Explicitly excluded:
 
 Gate:
 
-- outer lanes do not create illegal shared segments
+- outer lanes do not create illegal non-divider segment overlaps
 - repair accepted/rejected events are logged
 - validation passes after accepted repair
 

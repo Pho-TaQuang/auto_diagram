@@ -151,16 +151,18 @@ function parsesRoutingDividersAsValidEndpoints(): void {
     "<<Model>> SecondModel",
     "<<Model>> ThirdModel",
     "<<Model>> FourthModel",
+    "<<Model>> FifthModel",
     "SourceController ..> FirstModel : first",
     "SourceController ..> SecondModel : second",
     "SourceController ..> ThirdModel : third",
-    "SourceController ..> FourthModel : fourth"
+    "SourceController ..> FourthModel : fourth",
+    "SourceController ..> FifthModel : fifth"
   ].join("\n"))));
   const view = extractLayoutViewModel(parseMxGraphModelXml(xml));
 
-  assert.equal(view.classes.length, 5);
+  assert.equal(view.classes.length, 6);
   assert.equal(view.dividers.length, 1);
-  assert.equal(view.edges.length, 5);
+  assert.equal(view.edges.length, 6);
   assert.equal(view.diagnostics.some((diagnostic) => diagnostic.message.includes("invalid source") || diagnostic.message.includes("invalid target")), false);
   assert.ok(view.edges.some((edge) => edge.sourceId === view.dividers[0].id));
   assert.ok(view.edges.some((edge) => edge.targetId === view.dividers[0].id));

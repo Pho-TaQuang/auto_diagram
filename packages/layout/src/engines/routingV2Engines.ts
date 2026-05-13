@@ -130,7 +130,7 @@ function runRoutingV2(
   });
   const routedDocument = applyRouteResult(prepared, routeResult);
   const score = scoreLayout(routedDocument);
-  const validation = validateRoutingResult(prepared, routedDocument, context);
+  const validation = validateRoutingResult(prepared, routedDocument, context, logger.events);
   const routingSummary = buildRoutingSummary({
     document: routedDocument,
     routeStrategy: routeStrategy.id,
@@ -157,6 +157,10 @@ function runRoutingV2(
       invalidEdges: routingSummary.invalidEdges
     }
   });
+  const structuredDiagnostics = [
+    ...routeResult.diagnostics,
+    ...validation.diagnostics
+  ];
   const document: DiagramDocument = {
     ...routedDocument,
     diagnostics: [
@@ -168,16 +172,24 @@ function runRoutingV2(
       score: {
         ...score,
         edgeIdentityViolations: routingSummary.edgeIdentityViolations,
-        invalidSharedSegments: routingSummary.illegalSharedSegments,
+        illegalSegmentOverlaps: routingSummary.illegalSegmentOverlaps,
         outerLaneUsages: routingSummary.outerLaneUsages,
         routingFailures: routingSummary.routingFailures
-      }
+      },
+      diagnostics: structuredDiagnostics
     }
   };
 
   return {
     document,
-    report: logger.report(engine, forcedSourceFormat ?? normalizeResult.sourceFormat, options.traceRouting, routingSummary)
+    report: logger.report(
+      engine,
+      forcedSourceFormat ?? normalizeResult.sourceFormat,
+      options.traceRouting,
+      routingSummary,
+      structuredDiagnostics,
+      validation.edgeResults
+    )
   };
 }
 
@@ -569,6 +581,3 @@ function pointsEqual(left: DiagramPoint, right: DiagramPoint): boolean {
   return Math.abs(left.x - right.x) < 0.001 && Math.abs(left.y - right.y) < 0.001;
 }
 
-function canShareSegment(left: DiagramEdge, right: DiagramEdge): boolean {
-  return left.sourceId === right.sourceId || left.targetId === right.targetId;
-}

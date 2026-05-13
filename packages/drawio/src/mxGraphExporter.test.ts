@@ -120,10 +120,12 @@ function exportsDenseRoutingDividersAsSplitEdges(): void {
     "<<Model>> SecondModel",
     "<<Model>> ThirdModel",
     "<<Model>> FourthModel",
+    "<<Model>> FifthModel",
     "SourceController ..> FirstModel : first",
     "SourceController ..> SecondModel : second",
     "SourceController ..> ThirdModel : third",
-    "SourceController ..> FourthModel : fourth"
+    "SourceController ..> FourthModel : fourth",
+    "SourceController ..> FifthModel : fifth"
   ].join("\n"));
   assert.equal(XMLValidator.validate(xml), true);
 
@@ -134,13 +136,13 @@ function exportsDenseRoutingDividersAsSplitEdges(): void {
   const classIds = new Set(classCells.map((cell) => cell.id));
   const dividerIds = new Set(dividerCells.map((cell) => cell.id));
 
-  assert.equal(classCells.length, 5);
+  assert.equal(classCells.length, 6);
   assert.equal(dividerCells.length, 1);
-  assert.equal(edgeCells.length, 5);
+  assert.equal(edgeCells.length, 6);
   assert.ok(dividerCells.every((cell) => !String(cell.style).startsWith("swimlane")));
   assert.ok(edgeCells.every((cell) => classIds.has(cell.source) || dividerIds.has(cell.source)));
   assert.ok(edgeCells.every((cell) => classIds.has(cell.target) || dividerIds.has(cell.target)));
-  assert.equal(edgeCells.filter((cell) => dividerIds.has(cell.source)).length, 4);
+  assert.equal(edgeCells.filter((cell) => dividerIds.has(cell.source)).length, 5);
   assert.equal(edgeCells.filter((cell) => dividerIds.has(cell.target)).length, 1);
 }
 
@@ -168,10 +170,12 @@ function exportsEngineOwnedDividerSegments(): void {
     "<<Model>> SecondModel",
     "<<Model>> ThirdModel",
     "<<Model>> FourthModel",
+    "<<Model>> FifthModel",
     "SourceController ..> FirstModel : first",
     "SourceController ..> SecondModel : second",
     "SourceController ..> ThirdModel : third",
-    "SourceController ..> FourthModel : fourth"
+    "SourceController ..> FourthModel : fourth",
+    "SourceController ..> FifthModel : fifth"
   ].join("\n"));
   const layout = createInitialCoordinateRoutingLayoutV3(parsed);
   const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
@@ -188,7 +192,7 @@ function exportsEngineOwnedDividerSegments(): void {
 
   assert.equal(result.document.routingDividers?.length, 1);
   assert.equal(dividerCells.length, 1);
-  assert.equal(edgeCells.length, 5);
+  assert.equal(edgeCells.length, 6);
   assert.ok(result.document.edges.every((edge) => edge.layout?.routeSource === "engine-v2"));
   assert.ok(result.document.edges.some((edge) => (edge.layout?.routedSegments?.length ?? 0) > 1));
   assert.ok(edgeCells.every((cell) => !String(cell.style).includes("jettySize=auto")));

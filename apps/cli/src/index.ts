@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { toMxGraphModelXml } from "../../../packages/drawio/src/index.js";
+import type { DiagramDiagnostic } from "../../../packages/core/src/index.js";
 import {
   applyStereotypeGridLayout,
   createDefaultLayoutEngineRegistry,
@@ -231,6 +232,51 @@ function emitLayoutReport(report: LayoutRunReport, options: GenerateArgs): void 
       console.log(line);
     }
   }
+
+  for (const diagnostic of report.diagnostics) {
+    const level = diagnostic.severity === "error" ? "error" : "warn";
+    if (!allowedLevels.has(level)) {
+      continue;
+    }
+    const prefix = diagnostic.severity === "error" ? "Error" : "Warning";
+    console.warn(`${prefix}: ${formatDiagnostic(diagnostic)}`);
+  }
+}
+
+function formatDiagnostic(diagnostic: DiagramDiagnostic): string {
+  if (diagnostic.type === "layout-change-required") {
+    return [
+      "Routing hard validation failed.",
+      diagnostic.reason ? `Reason: ${diagnostic.reason}.` : "",
+      diagnostic.edgeIds?.length ? `Edges: ${diagnostic.edgeIds.join(", ")}.` : "",
+      diagnostic.message,
+      diagnostic.recommendedAction ? `Suggested fix: ${formatRecommendedAction(diagnostic.recommendedAction)}.` : ""
+    ].filter(Boolean).join(" ");
+  }
+
+  if (diagnostic.type === "edge-crossing") {
+    return [
+      "Edge crossing remains.",
+      diagnostic.edgeIds?.length ? `Edges: ${diagnostic.edgeIds.join(", ")}.` : "",
+      diagnostic.message,
+      diagnostic.recommendedAction ? `Suggested fix: ${formatRecommendedAction(diagnostic.recommendedAction)}.` : ""
+    ].filter(Boolean).join(" ");
+  }
+
+  return diagnostic.message;
+}
+
+function formatRecommendedAction(action: NonNullable<DiagramDiagnostic["recommendedAction"]>): string {
+  if (action.kind === "increase-gap") {
+    return `increase ${action.direction === "x" ? "horizontal" : "vertical"} gap between ${action.betweenGroupIds[0]} and ${action.betweenGroupIds[1]} by ${action.amount}px`;
+  }
+  if (action.kind === "move-group") {
+    return `move ${action.groupId} ${action.direction} by ${action.amount}px`;
+  }
+  if (action.kind === "change-packing") {
+    return `change ${action.groupId} packing from ${action.from} to ${action.to}`;
+  }
+  return `reorder nodes in ${action.groupId}`;
 }
 
 function usage(): string {

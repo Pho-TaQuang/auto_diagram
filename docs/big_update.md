@@ -256,10 +256,9 @@ Outer lane không được làm mất identity của edge.
 
 Rule identity:
 
-```ts
-function canShareSegment(a: DiagramEdge, b: DiagramEdge): boolean {
-  return a.sourceId === b.sourceId || a.targetId === b.targetId;
-}
+```text
+Same-source or same-target edges do not automatically get shared segments.
+Only valid engine-owned divider trunk routing may share segments.
 ```
 
 Không hợp lệ:
@@ -352,7 +351,7 @@ Cost gợi ý:
 
 ```text
 node hit: hard reject
-illegal shared segment: hard reject
+illegal non-divider segment overlap: hard reject
 
 inner corridor route: cost thấp
 private lane offset: cost thấp-trung bình
@@ -683,7 +682,7 @@ Nên mở rộng hoặc bổ sung score v2:
 ```ts
 export type DiagramLayoutScoreV2 = DiagramLayoutScore & {
   edgeIdentityViolations: number;
-  invalidSharedSegments: number;
+  illegalSegmentOverlaps: number;
   outerLaneUsages: number;
   routingFailures: number;
 };
@@ -693,7 +692,7 @@ Nếu muốn backward-compatible, có thể giữ `DiagramLayoutScore` và thêm
 
 ```ts
 edgeIdentityViolations?: number;
-invalidSharedSegments?: number;
+illegalSegmentOverlaps?: number;
 outerLaneUsages?: number;
 routingFailures?: number;
 ```
@@ -703,7 +702,7 @@ Trọng số mới:
 ```ts
 const scoreWeightsV2 = {
   edgeIdentityViolations: 1_000_000_000_000,
-  invalidSharedSegments: 1_000_000_000_000,
+  illegalSegmentOverlaps: 1_000_000_000_000,
   edgeNodeHits: 1_000_000_000,
   nodeOverlaps: 800_000_000,
   groupOverlaps: 500_000_000,
@@ -1109,14 +1108,14 @@ anchorAssignmentV2.test.ts
   bucket ordering deterministic
 
 dividerPlanningV2.test.ts
-  same-source fan-out allowed
-  same-target fan-in allowed
+  fan-out divider allowed only with one source and more than four edges
+  fan-in divider allowed only with one target and more than four edges
   arbitrary group-to-group cluster rejected
 
 segmentIndex.test.ts
   crossing detection
-  legal shared segment detection
-  illegal shared segment detection
+  divider-owned trunk segment exemption
+  illegal segment overlap detection
 
 orthogonalRouterV2.test.ts
   private routes do not hit nodes
@@ -1137,10 +1136,10 @@ legacy layout input
   v1 layout json converted and routed
 
 fan-in/fan-out diagram
-  divider created only for same source/target
+  divider created only for fan-in/fan-out groups with more than four edges
 
 DTO bottleneck case
-  outer lanes used without illegal segment sharing
+  outer lanes used without illegal non-divider segment overlap
 ```
 
 ## Regression tests
@@ -1171,7 +1170,7 @@ Mục tiêu: `--layout layout.v2.json` chạy được và không move group.
 - fan-in/fan-out detection
 - divider planning
 - divider routing
-- illegal shared segment validation
+- illegal segment overlap validation
 ```
 
 Mục tiêu: không còn bundle sai semantic.

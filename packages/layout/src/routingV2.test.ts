@@ -9,7 +9,8 @@ import {
   normalizeLayoutInput,
   resolveLayoutEngineOptions,
   validateRoutedDocument,
-  type CoordinateRoutingLayoutV3
+  type CoordinateRoutingLayoutV3,
+  type LayoutEngineOptions
 } from "./index.js";
 import type { LayoutRunContext } from "./engine/LayoutEngine.js";
 import type { DiagramDocument, DiagramEdgeAnchor } from "../../core/src/index.js";
@@ -20,6 +21,7 @@ export function runRoutingV2Tests(): void {
   runRoutingV2Slice3Tests();
   runRoutingV2Slice4ATests();
   runRoutingV2Slice4BTests();
+  runRoutingV2Slice5ATests();
 }
 
 export function runRoutingV2Slice1Tests(): void {
@@ -51,7 +53,23 @@ export function runRoutingV2Slice4BTests(): void {
   outerLaneRepairEmitsStructuredLogs();
   routingSummaryReportsHardValidationStatus();
   validationEventsAreLoggedBeforeRouteComplete();
-  validatorAllowsLegalSharedSegmentsOnly();
+}
+
+export function runRoutingV2Slice5ATests(): void {
+  sameSourceWithoutDividerCannotShareSegments();
+  sameTargetWithoutDividerCannotShareSegments();
+  fanOutMoreThanFourUsesDivider();
+  fanInMoreThanFourUsesDivider();
+  fanOutAtOrBelowThresholdDoesNotUseDividerOrShareSegments();
+  fanInAtOrBelowThresholdDoesNotUseDividerOrShareSegments();
+  dividerOwnedTrunkSegmentsAreNotIllegalOverlaps();
+  nodeHitIsHardFailure();
+  invalidDividerIsHardFailure();
+  crossingOnlyIsSoftWarning();
+  terminalStubsMoveOutsideNodes();
+  privateOffsetsAvoidSegmentOverlap();
+  cleanCandidatePreferredOverDirtyCandidate();
+  fallbackRouteMarksHardInvalid();
 }
 
 function registryRejectsUnknownEngine(): void {
@@ -190,25 +208,12 @@ function templateOnlyDoesNotPlanDividers(): void {
 }
 
 function hardValidationErrorsAppearInReport(): void {
-  const parsed = parseMermaidClassDiagram([
-    "classDiagram",
-    "<<Controller>> SourceController",
-    "<<Helper>> BlockingHelper",
-    "<<Model>> TargetModel",
-    "SourceController --> TargetModel : blocked"
-  ].join("\n"));
-  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
-  setGroup(layout, "Controller", { x: 0, y: 0 });
-  setGroup(layout, "Helper", { x: 310, y: 0 });
-  setGroup(layout, "Model", { x: 620, y: 0 });
-  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
-    document: parsed,
-    mode: "manual-routing-v2",
-    layoutInput: layout,
-    options: { traceRouting: true }
-  });
+  const document = routedNodeHitDocument();
+  const logger = new MemoryLayoutLogger();
+  const result = validateRoutedDocument(document, document, createContext(logger));
 
-  assert.ok(result.report.errors.some((event) => event.type === "edge-node-hit"));
+  assert.ok(logger.events.some((event) => event.type === "edge-node-hit"));
+  assert.equal(result.valid, false);
 }
 
 function fanOutDividerIsOptInStrategyBehavior(): void {
@@ -221,9 +226,8 @@ function fanOutDividerIsOptInStrategyBehavior(): void {
     options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
   });
 
-  assert.equal(result.document.routingDividers?.length, 1);
-  assert.equal(result.document.routingDividers?.[0]?.mode, "fanOut");
-  assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), true);
+  assert.equal(result.document.routingDividers, undefined);
+  assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), false);
 }
 
 function fanInDividerIsOptInStrategyBehavior(): void {
@@ -236,9 +240,8 @@ function fanInDividerIsOptInStrategyBehavior(): void {
     options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
   });
 
-  assert.equal(result.document.routingDividers?.length, 1);
-  assert.equal(result.document.routingDividers?.[0]?.mode, "fanIn");
-  assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), true);
+  assert.equal(result.document.routingDividers, undefined);
+  assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), false);
 }
 
 function independentEdgesAreNotBundled(): void {
@@ -268,8 +271,8 @@ function outerLaneAvoidsBlockedNodeWhenStrategyEnabled(): void {
     options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
   });
 
-  assert.equal(result.report.trace?.some((event) => event.type === "outer-lane-used"), true);
   assert.equal(result.report.errors.some((event) => event.type === "edge-node-hit"), false);
+  assert.equal(result.report.trace?.some((event) => event.type === "routing-fallback-used"), false);
 }
 
 function outerLaneRepairEmitsStructuredLogs(): void {
@@ -311,8 +314,11 @@ function routingSummaryReportsHardValidationStatus(): void {
   assert.equal(result.report.routingSummary?.validEdges, 1);
   assert.equal(result.report.routingSummary?.invalidEdges, 0);
   assert.equal(result.report.routingSummary?.edgeNodeHits, 0);
-  assert.equal(result.report.routingSummary?.illegalSharedSegments, 0);
-  assert.equal(result.document.layout?.score.invalidSharedSegments, 0);
+  assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
+  assert.equal(result.document.layout?.score.illegalSegmentOverlaps, 0);
+  assert.ok(Array.isArray(result.report.diagnostics));
+  assert.ok(Array.isArray(result.report.edgeValidations));
+  assert.ok(Array.isArray(result.document.layout?.diagnostics));
 }
 
 function validationEventsAreLoggedBeforeRouteComplete(): void {
@@ -335,19 +341,149 @@ function validationEventsAreLoggedBeforeRouteComplete(): void {
   assert.ok(indexOf(traceTypes, "route-validation-passed", "route-validation-failed") < indexOf(traceTypes, "route-complete"));
 }
 
-function validatorAllowsLegalSharedSegmentsOnly(): void {
-  const legal = routedOverlapDocument("legal-shared", true);
-  const legalLogger = new MemoryLayoutLogger();
-  const legalResult = validateRoutedDocument(legal, legal, createContext(legalLogger));
+function sameSourceWithoutDividerCannotShareSegments(): void {
+  const document = routedOverlapDocument("same-source-shared", "same-source");
+  const logger = new MemoryLayoutLogger();
+  const result = validateRoutedDocument(document, document, createContext(logger));
 
-  assert.equal(legalResult.illegalSharedSegments, 0);
+  assert.ok(result.illegalSegmentOverlaps > 0);
+  assert.equal(result.valid, false);
+  assert.ok(logger.events.some((event) => event.type === "illegal-segment-overlap"));
+  assert.ok(result.diagnostics.some((diagnostic) => diagnostic.type === "layout-change-required" && diagnostic.reason === "illegal-segment-overlap"));
+}
 
-  const illegal = routedOverlapDocument("illegal-shared", false);
-  const illegalLogger = new MemoryLayoutLogger();
-  const illegalResult = validateRoutedDocument(illegal, illegal, createContext(illegalLogger));
+function sameTargetWithoutDividerCannotShareSegments(): void {
+  const document = routedOverlapDocument("same-target-shared", "same-target");
+  const logger = new MemoryLayoutLogger();
+  const result = validateRoutedDocument(document, document, createContext(logger));
 
-  assert.ok(illegalResult.illegalSharedSegments > 0);
-  assert.ok(illegalLogger.events.some((event) => event.type === "illegal-shared-segment"));
+  assert.ok(result.illegalSegmentOverlaps > 0);
+  assert.equal(result.valid, false);
+}
+
+function fanOutMoreThanFourUsesDivider(): void {
+  const result = runManualV2(fanOutFixture(5), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+
+  assert.equal(result.document.routingDividers?.length, 1);
+  assert.equal(result.document.routingDividers?.[0]?.mode, "fanOut");
+  assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), true);
+}
+
+function fanInMoreThanFourUsesDivider(): void {
+  const result = runManualV2(fanInFixture(5), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+
+  assert.equal(result.document.routingDividers?.length, 1);
+  assert.equal(result.document.routingDividers?.[0]?.mode, "fanIn");
+  assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), true);
+}
+
+function fanOutAtOrBelowThresholdDoesNotUseDividerOrShareSegments(): void {
+  const result = runManualV2(readTextFixture("fan-out-divider.mmd"), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+
+  assert.equal(result.document.routingDividers, undefined);
+  assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
+}
+
+function fanInAtOrBelowThresholdDoesNotUseDividerOrShareSegments(): void {
+  const result = runManualV2(readTextFixture("fan-in-divider.mmd"), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+
+  assert.equal(result.document.routingDividers, undefined);
+  assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
+}
+
+function dividerOwnedTrunkSegmentsAreNotIllegalOverlaps(): void {
+  const document = duplicatedDividerTrunkDocument();
+  const logger = new MemoryLayoutLogger();
+  const result = validateRoutedDocument(document, document, createContext(logger));
+
+  assert.ok(result.segmentOverlaps > 0);
+  assert.equal(result.illegalSegmentOverlaps, 0);
+  assert.equal(result.valid, true);
+}
+
+function nodeHitIsHardFailure(): void {
+  const document = routedNodeHitDocument();
+  const logger = new MemoryLayoutLogger();
+  const result = validateRoutedDocument(document, document, createContext(logger));
+
+  assert.equal(result.valid, false);
+  assert.ok(result.edgeNodeHits > 0);
+}
+
+function invalidDividerIsHardFailure(): void {
+  const document = duplicatedDividerTrunkDocument(true);
+  const logger = new MemoryLayoutLogger();
+  const result = validateRoutedDocument(document, document, createContext(logger));
+
+  assert.ok(result.invalidDividers > 0);
+  assert.equal(result.valid, false);
+}
+
+function crossingOnlyIsSoftWarning(): void {
+  const document = crossingOnlyDocument();
+  const logger = new MemoryLayoutLogger();
+  const result = validateRoutedDocument(document, document, createContext(logger));
+
+  assert.equal(result.valid, true);
+  assert.ok(result.edgeCrossings > 0);
+  assert.equal(result.illegalSegmentOverlaps, 0);
+  assert.ok(logger.events.some((event) => event.type === "edge-crossing" && event.level === "warn"));
+  assert.ok(result.diagnostics.some((diagnostic) => diagnostic.type === "edge-crossing" && diagnostic.severity === "warning"));
+}
+
+function terminalStubsMoveOutsideNodes(): void {
+  const result = runManualV2([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Model>> TargetModel",
+    "SourceController --> TargetModel : ok"
+  ].join("\n"), { routeStrategy: "template-with-outer-lanes" });
+  const edge = result.document.edges[0];
+  assert.ok(edge.layout?.sourceAnchor);
+  assert.ok(edge.layout.routedSegments?.[0]);
+  const source = result.document.nodes.find((node) => node.id === edge.sourceId);
+  assert.ok(source?.layout);
+  const anchor = anchorPoint(source.layout, edge.layout.sourceAnchor);
+  const firstWaypoint = edge.layout.routedSegments[0].waypoints[0];
+  assert.ok(firstWaypoint);
+
+  if (edge.layout.sourceAnchor.side === "east") {
+    assert.ok(firstWaypoint.x > anchor.x);
+  } else if (edge.layout.sourceAnchor.side === "west") {
+    assert.ok(firstWaypoint.x < anchor.x);
+  } else if (edge.layout.sourceAnchor.side === "north") {
+    assert.ok(firstWaypoint.y < anchor.y);
+  } else {
+    assert.ok(firstWaypoint.y > anchor.y);
+  }
+}
+
+function privateOffsetsAvoidSegmentOverlap(): void {
+  const result = runManualV2(fanOutFixture(4), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+
+  assert.equal(result.document.routingDividers, undefined);
+  assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
+}
+
+function cleanCandidatePreferredOverDirtyCandidate(): void {
+  const result = runManualV2([
+    "classDiagram",
+    "<<Controller>> SourceController",
+    "<<Helper>> BlockingHelper",
+    "<<Model>> TargetModel",
+    "SourceController --> TargetModel : blocked"
+  ].join("\n"), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+
+  assert.equal(result.report.errors.some((event) => event.type === "edge-node-hit"), false);
+  assert.equal(result.report.trace?.some((event) => event.type === "routing-fallback-used"), false);
+}
+
+function fallbackRouteMarksHardInvalid(): void {
+  const result = runManualV2(fanOutFixture(4), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+
+  assert.ok(result.document.edges.some((edge) => (edge.layout?.routedSegments?.length ?? 0) > 0));
+  assert.equal(result.report.trace?.some((event) => event.type === "routing-fallback-used"), true);
+  assert.equal(result.report.routingSummary?.hardValid, false);
 }
 
 function createContext(logger: MemoryLayoutLogger): LayoutRunContext {
@@ -363,25 +499,146 @@ function indexOf(values: string[], ...types: string[]): number {
   return index;
 }
 
-function routedOverlapDocument(id: string, sharedSource: boolean): DiagramDocument {
+function runManualV2(source: string, options: LayoutEngineOptions = {}) {
+  const parsed = parseMermaidClassDiagram(source);
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  return createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options
+  });
+}
+
+function fanOutFixture(edgeCount: number): string {
+  return [
+    "classDiagram",
+    "<<Controller>> SourceController",
+    ...Array.from({ length: edgeCount }, (_, index) => `<<Model>> TargetModel${index + 1}`),
+    ...Array.from({ length: edgeCount }, (_, index) => `SourceController --> TargetModel${index + 1} : edge${index + 1}`)
+  ].join("\n");
+}
+
+function fanInFixture(edgeCount: number): string {
+  return [
+    "classDiagram",
+    ...Array.from({ length: edgeCount }, (_, index) => `<<Controller>> SourceController${index + 1}`),
+    "<<Model>> TargetModel",
+    ...Array.from({ length: edgeCount }, (_, index) => `SourceController${index + 1} --> TargetModel : edge${index + 1}`)
+  ].join("\n");
+}
+
+function routedOverlapDocument(id: string, mode: "same-source" | "same-target" | "independent"): DiagramDocument {
   const east: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
   const west: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
   const nodes = [
     node("A", 0, 0),
     node("B", 200, 0),
-    node(sharedSource ? "D" : "C", sharedSource ? 200 : 0, 0),
-    ...(sharedSource ? [] : [node("D", 200, 0)])
+    node("C", 0, 0),
+    node("D", 200, 0)
   ];
-  const secondSource = sharedSource ? "A" : "C";
+  const secondSource = mode === "same-source" ? "A" : "C";
+  const firstTarget = mode === "same-target" ? "D" : "B";
 
   return {
     id,
     type: "classDiagram",
     nodes,
     edges: [
-      routedEdge("edge_1", "A", "B", east, west),
+      routedEdge("edge_1", "A", firstTarget, east, west),
       routedEdge("edge_2", secondSource, "D", east, west)
     ],
+    diagnostics: []
+  };
+}
+
+function crossingOnlyDocument(): DiagramDocument {
+  const east: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const west: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+  const south: DiagramEdgeAnchor = { side: "south", ratio: 0.5 };
+  const north: DiagramEdgeAnchor = { side: "north", ratio: 0.5 };
+
+  return {
+    id: "crossing-only",
+    type: "classDiagram",
+    nodes: [
+      node("A", 0, 0),
+      node("B", 200, 0),
+      node("C", 100, -100),
+      node("D", 100, 100)
+    ],
+    edges: [
+      routedEdge("edge_1", "A", "B", east, west, [{ x: 140, y: 20 }]),
+      routedEdge("edge_2", "C", "D", south, north, [{ x: 140, y: -20 }, { x: 140, y: 120 }])
+    ],
+    diagnostics: []
+  };
+}
+
+function routedNodeHitDocument(): DiagramDocument {
+  const east: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const west: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+
+  return {
+    id: "node-hit",
+    type: "classDiagram",
+    nodes: [
+      node("A", 0, 0),
+      node("BlockingNode", 130, 0),
+      node("B", 300, 0)
+    ],
+    edges: [
+      routedEdge("edge_1", "A", "B", east, west, [{ x: 180, y: 20 }])
+    ],
+    diagnostics: []
+  };
+}
+
+function duplicatedDividerTrunkDocument(invalidDivider = false): DiagramDocument {
+  const east: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const west: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+  const dividerAnchor: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+  const targetIds = ["B", "C", "D", "E", "F"];
+  const nodes = [
+    node("A", 0, 0),
+    ...targetIds.map((id, index) => node(id, 300, index * 80))
+  ];
+  const divider = {
+    id: "divider_1",
+    orientation: "vertical" as const,
+    side: "east" as const,
+    sourceEdgeIds: invalidDivider ? ["edge_1", "edge_2", "edge_3", "edge_4"] : ["edge_1", "edge_2", "edge_3", "edge_4", "edge_5"],
+    mode: "fanOut" as const,
+    layout: { x: 180, y: 0, width: 10, height: 260 }
+  };
+
+  return {
+    id: "duplicated-divider-trunk",
+    type: "classDiagram",
+    nodes,
+    routingDividers: [divider],
+    edges: targetIds.map((targetId, index) => ({
+      id: `edge_${index + 1}`,
+      sourceId: "A",
+      targetId,
+      kind: "directedAssociation" as const,
+      operator: "-->" as const,
+      layout: {
+        sourceAnchor: east,
+        targetAnchor: west,
+        routeSource: "engine-v2" as const,
+        routedSegments: [{
+          id: `edge_${index + 1}:divider-trunk`,
+          sourceId: "A",
+          targetId: "divider_1",
+          sourceAnchor: east,
+          targetAnchor: dividerAnchor,
+          waypoints: [{ x: 120, y: 20 }, { x: 120, y: 130 }],
+          markerPolicy: { start: true, end: false },
+          strategy: "divider" as const
+        }]
+      }
+    })),
     diagnostics: []
   };
 }
@@ -405,7 +662,14 @@ function node(id: string, x: number, y: number) {
   };
 }
 
-function routedEdge(id: string, sourceId: string, targetId: string, sourceAnchor: DiagramEdgeAnchor, targetAnchor: DiagramEdgeAnchor) {
+function routedEdge(
+  id: string,
+  sourceId: string,
+  targetId: string,
+  sourceAnchor: DiagramEdgeAnchor,
+  targetAnchor: DiagramEdgeAnchor,
+  waypoints: Array<{ x: number; y: number }> = [{ x: 140, y: 20 }]
+) {
   return {
     id,
     sourceId,
@@ -422,12 +686,28 @@ function routedEdge(id: string, sourceId: string, targetId: string, sourceAnchor
         targetId,
         sourceAnchor,
         targetAnchor,
-        waypoints: [{ x: 140, y: 20 }],
+        waypoints,
         markerPolicy: { start: true, end: true },
         strategy: "corridor" as const
       }]
     }
   };
+}
+
+function anchorPoint(
+  rectangle: { x: number; y: number; width: number; height: number },
+  anchor: DiagramEdgeAnchor
+): { x: number; y: number } {
+  if (anchor.side === "north") {
+    return { x: rectangle.x + rectangle.width * anchor.ratio, y: rectangle.y };
+  }
+  if (anchor.side === "south") {
+    return { x: rectangle.x + rectangle.width * anchor.ratio, y: rectangle.y + rectangle.height };
+  }
+  if (anchor.side === "west") {
+    return { x: rectangle.x, y: rectangle.y + rectangle.height * anchor.ratio };
+  }
+  return { x: rectangle.x + rectangle.width, y: rectangle.y + rectangle.height * anchor.ratio };
 }
 
 function setGroup(layout: CoordinateRoutingLayoutV3, label: string, patch: { x: number; y: number }): void {

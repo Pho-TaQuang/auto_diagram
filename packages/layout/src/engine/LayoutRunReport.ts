@@ -1,4 +1,4 @@
-import type { DiagramDiagnostic } from "../../../core/src/index.js";
+import type { DiagramDiagnostic, DiagramPoint } from "../../../core/src/index.js";
 
 export type LayoutEngineId =
   | "stereotype-scored"
@@ -54,7 +54,7 @@ export type RoutingSummary = {
   edgeNodeHits: number;
   edgeCrossings: number;
   segmentOverlaps: number;
-  illegalSharedSegments: number;
+  illegalSegmentOverlaps: number;
   edgeIdentityViolations: number;
   invalidDividers: number;
   outerLaneUsages: number;
@@ -63,11 +63,51 @@ export type RoutingSummary = {
   repairRejected: number;
 };
 
+export type RoutingSegmentRef = {
+  edgeId: string;
+  segmentId?: string;
+  segmentIndex: number;
+};
+
+export type RoutingNodeHitRef = {
+  nodeId: string;
+  segment: RoutingSegmentRef;
+};
+
+export type RoutingEdgeCrossingRef = {
+  otherEdgeId: string;
+  segment: RoutingSegmentRef;
+  otherSegment: RoutingSegmentRef;
+  point?: DiagramPoint;
+};
+
+export type RoutingSegmentOverlapRef = {
+  otherEdgeId: string;
+  segment: RoutingSegmentRef;
+  otherSegment: RoutingSegmentRef;
+  dividerExempt: boolean;
+};
+
+export type EdgeRoutingValidationResult = {
+  edgeId: string;
+  nodeHits: RoutingNodeHitRef[];
+  edgeCrossings: RoutingEdgeCrossingRef[];
+  segmentOverlaps: RoutingSegmentOverlapRef[];
+  illegalSegmentOverlaps: RoutingSegmentOverlapRef[];
+  routingFallbackUsed: boolean;
+  routingFailed: boolean;
+  invalidDividers: string[];
+  edgeIdentityViolations: string[];
+  hardValid: boolean;
+};
+
 export type LayoutRunReport = {
   engine: LayoutEngineId;
   sourceFormat?: LayoutSourceFormat;
   warnings: LayoutLogEvent[];
   errors: LayoutLogEvent[];
+  diagnostics: DiagramDiagnostic[];
+  edgeValidations?: EdgeRoutingValidationResult[];
   routingSummary?: RoutingSummary;
   trace?: LayoutLogEvent[];
 };
@@ -107,13 +147,17 @@ export class MemoryLayoutLogger implements LayoutLogger {
     engine: LayoutEngineId,
     sourceFormat?: LayoutSourceFormat,
     includeTrace = false,
-    routingSummary?: RoutingSummary
+    routingSummary?: RoutingSummary,
+    diagnostics: DiagramDiagnostic[] = [],
+    edgeValidations?: EdgeRoutingValidationResult[]
   ): LayoutRunReport {
     return {
       engine,
       sourceFormat,
       warnings: this.events.filter((event) => event.level === "warn"),
       errors: this.events.filter((event) => event.level === "error"),
+      diagnostics,
+      ...(edgeValidations ? { edgeValidations } : {}),
       ...(routingSummary ? { routingSummary } : {}),
       ...(includeTrace ? { trace: [...this.events] } : {})
     };

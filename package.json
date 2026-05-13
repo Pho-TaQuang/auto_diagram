@@ -14,6 +14,7 @@
     "test:routing-v2:slice3": "npm run build --silent && node dist/tests/run-tests.js \"routing v2 slice 3\"",
     "test:routing-v2:slice4a": "npm run build --silent && node dist/tests/run-tests.js \"routing v2 slice 4a\"",
     "test:routing-v2:slice4b": "npm run build --silent && node dist/tests/run-tests.js \"routing v2 slice 4b\"",
+    "test:routing-v2:slice5a": "npm run build --silent && node dist/tests/run-tests.js \"routing v2 slice 5a\"",
     "test:routing-v2:slice5": "npm run build --silent && node dist/tests/run-tests.js cli",
     "test:cli": "npm run build --silent && node dist/tests/run-tests.js cli",
     "test:web": "npm run build --silent && node dist/tests/run-tests.js \"web pipeline\"",

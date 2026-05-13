@@ -44,7 +44,13 @@ export type {
   LayoutLogger,
   LayoutRunReport,
   LayoutSourceFormat,
-  RoutingSummary
+  RoutingEdgeCrossingRef,
+  RoutingNodeHitRef,
+  RoutingSegmentOverlapRef,
+  RoutingSegmentRef,
+  RoutingSummary,
+  EdgeRoutingValidationResult,
+  EdgeRoutingValidationResult as RoutingEdgeValidationResult
 } from "./engine/LayoutRunReport.js";
 export type {
   CoordinateRoutingLayoutGroupV3,

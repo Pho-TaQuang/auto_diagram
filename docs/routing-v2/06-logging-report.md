@@ -2,18 +2,22 @@
 
 Routing v2 emits `LayoutLogEvent` entries for conversion, defaulting, deprecated field conversion, route selection, fallback, divider decisions, outer lane usage, repair attempts, and hard validation failures.
 
+Default reports include warnings and errors. Trace is included only when requested by CLI/web options. Human-readable warning and error messages are preserved, while structured diagnostics are added for tools that need actionable routing data.
+
 ```ts
 export type LayoutRunReport = {
   engine: "stereotype-scored" | "manual-routing-v2" | "suggest-initial-v2" | "auto-arrange-v2";
   sourceFormat?: "coordinate-routing-v3" | "relative-flow-v2" | "stereotype-grid-v1" | "none";
   warnings: LayoutLogEvent[];
   errors: LayoutLogEvent[];
+  diagnostics: DiagramDiagnostic[];
   routingSummary?: RoutingSummary;
+  edgeValidations?: EdgeRoutingValidationResult[];
   trace?: LayoutLogEvent[];
 };
 ```
 
-Default reports include warnings and errors. Trace is included only when requested by CLI/web options.
+`DiagramDocument.layout.diagnostics` mirrors the same structured layout diagnostics for downstream consumers that only receive the document. The existing top-level `DiagramDocument.diagnostics` remains a human-readable message stream.
 
 `RoutingSummary` is the stable high-level routing result for CLI/debug consumers:
 
@@ -29,13 +33,34 @@ export type RoutingSummary = {
   edgeNodeHits: number;
   edgeCrossings: number;
   segmentOverlaps: number;
-  illegalSharedSegments: number;
+  illegalSegmentOverlaps: number;
   edgeIdentityViolations: number;
   invalidDividers: number;
   outerLaneUsages: number;
   routingFailures: number;
   repairAccepted: number;
   repairRejected: number;
+};
+```
+
+Structured routing diagnostics use these public diagnostic shapes:
+
+```ts
+type LayoutChangeRequiredDiagnostic = {
+  type: "layout-change-required";
+  severity: "error";
+  reason: "edge-node-hit" | "illegal-segment-overlap" | "routing-failure" | "invalid-divider";
+  edgeIds: string[];
+  groupIds: string[];
+  recommendedAction?: LayoutRecommendedAction;
+};
+
+type EdgeCrossingDiagnostic = {
+  type: "edge-crossing";
+  severity: "warning";
+  edgeIds: string[];
+  groupIds: string[];
+  recommendedAction?: LayoutRecommendedAction;
 };
 ```
 

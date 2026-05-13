@@ -10,8 +10,8 @@ Artifacts:
 
 Gate:
 
-- same-source fan-out allowed
-- same-target fan-in allowed
+- fan-out divider allowed only when one source has more than four routed edges
+- fan-in divider allowed only when one target has more than four routed edges
 - `A1->B1`, `A2->B2`, `A3->B3` is not bundled
 
 Targeted test:

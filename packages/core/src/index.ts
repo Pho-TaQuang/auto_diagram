@@ -32,10 +32,48 @@ export type RelationshipOperator =
 
 export type Visibility = "+" | "-" | "#" | "~";
 
+export type LayoutDiagnosticReason =
+  | "edge-node-hit"
+  | "illegal-segment-overlap"
+  | "routing-failure"
+  | "invalid-divider"
+  | "edge-crossing";
+
+export type LayoutRecommendedAction =
+  | {
+      kind: "increase-gap";
+      betweenGroupIds: [string, string];
+      direction: "x" | "y";
+      amount: number;
+    }
+  | {
+      kind: "move-group";
+      groupId: string;
+      direction: "left" | "right" | "up" | "down";
+      amount: number;
+    }
+  | {
+      kind: "change-packing";
+      groupId: string;
+      from: "vertical" | "horizontal";
+      to: "vertical" | "horizontal";
+    }
+  | {
+      kind: "reorder-nodes";
+      groupId: string;
+      suggestedNodeOrder: string[];
+    };
+
 export type DiagramDiagnostic = {
   severity: DiagnosticSeverity;
   message: string;
   line?: number;
+  type?: "layout-change-required" | "edge-crossing";
+  reason?: LayoutDiagnosticReason;
+  edgeIds?: string[];
+  groupIds?: string[];
+  recommendedAction?: LayoutRecommendedAction;
+  data?: Record<string, unknown>;
 };
 
 export type DiagramPoint = {
@@ -107,7 +145,7 @@ export type DiagramLayoutScore = {
   layoutHeight: number;
   layoutArea: number;
   edgeIdentityViolations?: number;
-  invalidSharedSegments?: number;
+  illegalSegmentOverlaps?: number;
   outerLaneUsages?: number;
   routingFailures?: number;
 };
@@ -121,6 +159,7 @@ export type DiagramLayoutEngine =
 export type DiagramLayoutState = {
   engine: DiagramLayoutEngine;
   score: DiagramLayoutScore;
+  diagnostics?: DiagramDiagnostic[];
   selectedCandidateId?: string;
   candidatesEvaluated?: number;
   grid?: {
