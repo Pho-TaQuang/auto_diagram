@@ -32,6 +32,8 @@ This enables template routing, private offset sweeps, outer lanes, dividers, spa
 
 The CLI writes `.drawio` output even when `routingSummary.hardValid` is `false`. Hard validation failures are surfaced through default warnings/errors, structured diagnostics, per-edge validation results, and optional report JSON instead of failing generation at runtime.
 
+All displayed segment overlaps are hard failures. Divider routes are expanded into one physical trunk plus spokes before validation, so there is no final divider-trunk overlap exemption.
+
 Example hard diagnostic:
 
 ```text

@@ -52,9 +52,12 @@ export type RoutingSummary = {
   nodeOverlaps: number;
   groupOverlaps: number;
   edgeNodeHits: number;
+  dividerNodeHits: number;
+  endpointDividerInteriorHits: number;
   edgeCrossings: number;
   segmentOverlaps: number;
   illegalSegmentOverlaps: number;
+  dividerSideOverflow: number;
   edgeIdentityViolations: number;
   invalidDividers: number;
   outerLaneUsages: number;
@@ -91,6 +94,8 @@ export type RoutingSegmentOverlapRef = {
 export type EdgeRoutingValidationResult = {
   edgeId: string;
   nodeHits: RoutingNodeHitRef[];
+  dividerNodeHits: RoutingNodeHitRef[];
+  endpointDividerInteriorHits: RoutingNodeHitRef[];
   edgeCrossings: RoutingEdgeCrossingRef[];
   segmentOverlaps: RoutingSegmentOverlapRef[];
   illegalSegmentOverlaps: RoutingSegmentOverlapRef[];

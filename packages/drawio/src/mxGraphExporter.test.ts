@@ -195,6 +195,8 @@ function exportsEngineOwnedDividerSegments(): void {
   assert.equal(edgeCells.length, 6);
   assert.ok(result.document.edges.every((edge) => edge.layout?.routeSource === "engine-v2"));
   assert.ok(result.document.edges.some((edge) => (edge.layout?.routedSegments?.length ?? 0) > 1));
+  assert.equal(result.document.edges.flatMap((edge) => edge.layout?.routedSegments ?? []).filter((segment) => segment.id.endsWith(":divider-trunk")).length, 1);
+  assert.ok(result.document.edges.flatMap((edge) => edge.layout?.routedSegments ?? []).filter((segment) => segment.id.endsWith(":divider-leaf")).length >= 5);
   assert.ok(edgeCells.every((cell) => !String(cell.style).includes("jettySize=auto")));
   assert.ok(edgeCells.some((cell) => waypointCount(cell) > 0));
 }

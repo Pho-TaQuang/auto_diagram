@@ -19,7 +19,9 @@ export function buildRoutingSummary(input: BuildRoutingSummaryInput): RoutingSum
     input.score.nodeOverlaps === 0 &&
     input.score.groupOverlaps === 0 &&
     input.validation.edgeNodeHits === 0 &&
-    input.validation.illegalSegmentOverlaps === 0 &&
+    input.validation.dividerNodeHits === 0 &&
+    input.validation.endpointDividerInteriorHits === 0 &&
+    input.validation.segmentOverlaps === 0 &&
     input.validation.edgeIdentityViolations === 0 &&
     input.validation.invalidDividers === 0 &&
     routingFailures === 0;
@@ -33,9 +35,12 @@ export function buildRoutingSummary(input: BuildRoutingSummaryInput): RoutingSum
     nodeOverlaps: input.score.nodeOverlaps,
     groupOverlaps: input.score.groupOverlaps,
     edgeNodeHits: input.validation.edgeNodeHits,
-    edgeCrossings: input.score.edgeCrossings,
-    segmentOverlaps: input.score.segmentOverlaps,
+    dividerNodeHits: input.validation.dividerNodeHits,
+    endpointDividerInteriorHits: input.validation.endpointDividerInteriorHits,
+    edgeCrossings: input.validation.edgeCrossings,
+    segmentOverlaps: input.validation.segmentOverlaps,
     illegalSegmentOverlaps: input.validation.illegalSegmentOverlaps,
+    dividerSideOverflow: input.validation.dividerSideOverflow,
     edgeIdentityViolations: input.validation.edgeIdentityViolations,
     invalidDividers: input.validation.invalidDividers,
     outerLaneUsages,

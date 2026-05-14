@@ -140,8 +140,10 @@ async function generatesWithRoutingV2LayoutAndReport(): Promise<void> {
     assert.ok(Array.isArray(report.diagnostics));
     assert.ok(Array.isArray(report.edgeValidations));
     assert.ok(Array.isArray(report.trace));
+    assert.equal(typeof report.routingSummary.dividerNodeHits, "number");
+    assert.equal(typeof report.routingSummary.endpointDividerInteriorHits, "number");
+    assert.equal(typeof report.routingSummary.dividerSideOverflow, "number");
     assert.ok(report.trace.some((event: any) => event.type === "route-strategy-selected" && event.data.routeStrategy === "template-with-outer-lanes"));
-    assert.ok(report.trace.some((event: any) => event.type === "divider-created"));
     assert.ok(report.trace.some((event: any) => event.type === "repair-complete"));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

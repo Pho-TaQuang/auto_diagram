@@ -21,6 +21,7 @@
     "test:web": "npm run build --silent && node dist/tests/run-tests.js \"web pipeline\"",
     "test:legacy-layout": "npm run build --silent && node dist/tests/run-tests.js \"stereotype grid layout\"",
     "test:drawio": "npm run build --silent && node dist/tests/run-tests.js \"drawio exporter\" \"mxGraph model\"",
+    "test:python": "python tests/standalone_python_test.py",
     "web:build": "vite build --config apps/web/vite.config.ts",
     "web:dev": "vite --config apps/web/vite.config.ts"
   },

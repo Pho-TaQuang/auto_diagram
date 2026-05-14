@@ -89,7 +89,7 @@ Draw.io export writes routed control points directly under `<Array as="points">`
 
 Relationship endpoints stay in the same left-to-right order as the Mermaid input. Arrowheads, inheritance triangles, and aggregation/composition diamonds are selected during draw.io export from the parsed Mermaid operator, so an operator such as `A --* B` affects the visual marker side without reversing the layout source and target.
 
-Dense fan-out and fan-in routes can be rendered through small layout-only routing dividers when more than four relationships compete for the same endpoint direction. For fan-out, the target groups or target nodes are treated as one cluster rectangle; for fan-in, the source groups or source nodes are treated as one cluster rectangle. Dividers are placed on a side of that rectangle, choose vertical or horizontal bus orientation from the selected side, and avoid reusing a side when another divider already belongs to the same cluster. Exported draw.io output contains the divider as a small connectable vertex and splits the visual connector into class-to-divider and divider-to-class segments without changing the semantic Mermaid relationships.
+Dense fan-out and fan-in routes can be rendered through small layout-only routing dividers when more than four relationships compete for the same common endpoint and the same remote stereotype group. For fan-out, each target group is treated as its own cluster; for fan-in, each source group is treated as its own cluster. Dividers are planned before route selection, become routing obstacles, and expand semantic relationships into physical trunk/spoke connector segments. Horizontal remote groups use north/south dividers, vertical remote groups use west/east dividers, and more than two dividers on the same remote group emit a `divider-side-overflow` warning while using deterministic side offsets. Exported draw.io output contains the divider as a small connectable vertex and serializes the engine-owned physical connector segments without changing the semantic Mermaid relationships.
 
 Group frames are hidden by default. To include them as background visuals:
 
@@ -171,6 +171,12 @@ Test:
 npm test
 ```
 
+Run the standalone Python regression checks:
+
+```bash
+npm run test:python
+```
+
 Run the web UI in development:
 
 ```bash
@@ -236,9 +242,41 @@ Routing v2 can emit structured run reports:
 npm run generate -- docs/demo_mermaid.md -o out/demo-v2.drawio --engine v2 --layout out/demo.routing-v3.json --verbose --log-layout-json out/demo.routing-report.json
 ```
 
-Use `--trace-routing` to include debug-level routing events in the console output. The report includes `routingSummary`, including `hardValid`, valid/invalid edge counts, node hits, crossings, total segment overlaps, illegal segment overlaps, repair counts, and routing fallback counts. The report also includes structured diagnostics and per-edge routing validation results. The CLI still writes `.drawio` output when `hardValid` is `false`; the report and console diagnostics describe the failed constraints.
+Use `--trace-routing` to include debug-level routing events in the console output. The report includes `routingSummary`, including `hardValid`, valid/invalid edge counts, class node hits, divider hits, endpoint-divider interior hits, crossings, total segment overlaps, illegal segment overlaps, divider side overflow count, repair counts, and routing fallback counts. All displayed segment overlaps are hard failures; crossings remain soft quality warnings. The report also includes structured diagnostics and per-edge routing validation results. The CLI still writes `.drawio` output when `hardValid` is `false`; the report and console diagnostics describe the failed constraints.
 
 For v2-routed edges, the layout engine owns generated anchors, waypoints, routing divider split segments, and validation status. The draw.io exporter serializes those engine-owned routes directly and does not invent divider waypoints for v2 output. Legacy exports keep the existing draw.io orthogonal routing style and `jettySize=auto`; v2 routed edges keep explicit anchors and waypoints but omit `jettySize=auto`.
+
+## Standalone Python Routing Pipeline
+
+`scripts/autodiagram_standalone.py` is a Python 3.10+ extraction of the current routing-v2 generation path. It uses only the Python standard library and does not call the Node/TypeScript packages. It is intended for portable/offline generation and regression checks, not as a backend service or replacement for the shared TypeScript packages.
+
+The supported pipeline is:
+
+```text
+Mermaid classDiagram -> DiagramDocument -> CoordinateRoutingLayoutV3 -> routing v2 -> mxGraphModel XML/.drawio
+```
+
+Create an editable coordinate-routing layout:
+
+```bash
+python scripts/autodiagram_standalone.py layout-init docs/demo_mermaid.md -o out/demo.python-routing-v3.json --engine v2
+```
+
+Generate from that layout:
+
+```bash
+python scripts/autodiagram_standalone.py generate docs/demo_mermaid.md -o out/demo.python.drawio --layout out/demo.python-routing-v3.json --engine v2
+```
+
+Generate directly and write a structured routing report:
+
+```bash
+python scripts/autodiagram_standalone.py generate docs/demo_mermaid.md -o out/demo.python.drawio --log-layout-json out/demo.python-report.json --engine v2
+```
+
+Use `--auto-arrange` to force a fresh generated CoordinateRoutingLayoutV3, `--group-frames` to include background group frames, `--verbose` for info-level routing logs, and `--trace-routing` for debug-level route events. The Python script is v2-only; `--engine legacy` is rejected.
+
+For large diagrams, the standalone Python port applies deterministic adaptive guards to keep CLI runs bounded: generated-layout optimization is skipped above 25 semantic edges, and sparse lane-graph recovery is limited to small diagrams. The output still includes route diagnostics and a routing summary, and `.drawio` is still written when hard validation fails.
 
 Open `out/demo.drawio` in draw.io / diagrams.net to inspect the result.
 
@@ -249,6 +287,7 @@ Open `out/demo.drawio` in draw.io / diagrams.net to inspect the result.
 - Undo/redo is model-level for layout edits. Drag gestures are coalesced into one history checkpoint instead of one checkpoint per mousemove.
 - Raw `<mxGraphModel>` XML and uncompressed `.drawio` imports are supported first; compressed draw.io files are deferred.
 - No continuous layout optimizer.
+- The standalone Python utility targets behavioral parity with routing-v2 acceptance criteria, not byte-for-byte XML identity with TypeScript output.
 - No compressed `.drawio` output.
 - No `<mxfile>` wrapper.
 - No free-form diagram editing.

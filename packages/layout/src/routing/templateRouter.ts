@@ -3,6 +3,7 @@ import type {
   DiagramEdge,
   DiagramEdgeAnchor,
   DiagramEdgeAnchorSide,
+  DiagramGroup,
   DiagramNode,
   DiagramPoint,
   DiagramRoutedEdgeSegment,
@@ -32,6 +33,8 @@ type EdgeEndpointAssignment = {
   edge: DiagramEdge;
   sourceAnchor: DiagramEdgeAnchor;
   targetAnchor: DiagramEdgeAnchor;
+  sourceAnchorsBySide: Record<DiagramEdgeAnchorSide, DiagramEdgeAnchor>;
+  targetAnchorsBySide: Record<DiagramEdgeAnchorSide, DiagramEdgeAnchor>;
 };
 
 type RouteCandidate = {
@@ -45,6 +48,17 @@ type RouteCandidate = {
 type AcceptedPath = {
   edge: DiagramEdge;
   points: DiagramPoint[];
+};
+
+type RoutedDividerSegment = {
+  edge: DiagramEdge;
+  segment: DiagramRoutedEdgeSegment;
+  points: DiagramPoint[];
+};
+
+type DividerPlanResult = {
+  dividers: DiagramRoutingDivider[];
+  diagnostics: DiagramDiagnostic[];
 };
 
 type RouteHardFailureBreakdown = {
@@ -104,23 +118,31 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
   const nodeById = new Map(request.document.nodes.map((node) => [node.id, node]));
   const nodeBounds = request.document.nodes.map((node) => requireNodeRectangle(node));
   const assignments = assignAnchors(request.document.edges, nodeById);
-  const acceptedPaths: AcceptedPath[] = [];
-  const routedEdges: DiagramEdge[] = [];
-  const diagnostics: DiagramDiagnostic[] = [];
-  const diagramBounds = rectangleBounds(nodeBounds);
+  const assignmentByEdgeId = new Map(assignments.map((assignment) => [assignment.edge.id, assignment]));
   const segmentStrategyByEdgeId = new Map<string, DiagramRoutedEdgeSegmentStrategy>();
   const anchoredEdgeById = new Map(assignments.map((assignment) => [
     assignment.edge.id,
     edgeWithAnchors(assignment)
   ]));
-  const dividers = options.includeDividers
+  const dividerPlan = options.includeDividers
     ? planRoutingDividers([...anchoredEdgeById.values()], request.document.nodes, request.intent.routing.dividerThreshold, request)
-    : [];
+    : { dividers: [], diagnostics: [] };
+  const dividers = dividerPlan.dividers;
+  const diagnostics: DiagramDiagnostic[] = [...dividerPlan.diagnostics];
   const dividerEdgeIds = new Set(dividers.flatMap((divider) => divider.sourceEdgeIds));
-  acceptedPaths.push(...buildDividerOccupancyPaths(dividers, anchoredEdgeById, request.document.nodes, diagramBounds));
-  const routePlans = assignments.map((assignment, assignmentIndex) => {
-    const source = requireNodeRectangle(requireNode(nodeById, assignment.edge.sourceId));
-    const target = requireNodeRectangle(requireNode(nodeById, assignment.edge.targetId));
+  const routeNodes = [...request.document.nodes, ...dividerObstacleNodes(dividers)];
+  const routeNodeById = new Map(routeNodes.map((node) => [node.id, node]));
+  const diagramBounds = rectangleBounds([...nodeBounds, ...dividers.map((divider) => dividerRectangle(divider))]);
+  const routedDividerSegments = routeDividerSegments(dividers, anchoredEdgeById, assignmentByEdgeId, routeNodes, diagramBounds);
+  const acceptedPaths: AcceptedPath[] = [...routedDividerSegments.paths];
+  const dividerRoutedEdges = [...dividerEdgeIds].map((edgeId) => {
+    const edge = requireMapValue(anchoredEdgeById, edgeId, "divider edge");
+    segmentStrategyByEdgeId.set(edge.id, "divider");
+    return edge;
+  });
+  const routePlans = assignments.filter((assignment) => !dividerEdgeIds.has(assignment.edge.id)).map((assignment, assignmentIndex) => {
+    const source = requireNodeRectangle(requireNode(routeNodeById, assignment.edge.sourceId));
+    const target = requireNodeRectangle(requireNode(routeNodeById, assignment.edge.targetId));
     const candidates = routeCandidatesForAnchors(
       assignment.edge.id,
       assignmentIndex,
@@ -134,15 +156,17 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
     );
 
     return { assignment, candidates };
-  }).sort((left, right) => routePlanDifficulty(right.assignment, request.document.nodes, assignments) - routePlanDifficulty(left.assignment, request.document.nodes, assignments) ||
+  }).sort((left, right) => routePlanDifficulty(right.assignment, routeNodes, assignments) - routePlanDifficulty(left.assignment, routeNodes, assignments) ||
     left.assignment.edge.id.localeCompare(right.assignment.edge.id));
 
   request.context.run.logger.debug({
     phase: "route",
     type: "route-candidates-generated",
-    message: `${routePlans.reduce((total, plan) => total + plan.candidates.length, 0)} route candidates generated.`,
+    message: `${routePlans.reduce((total, plan) => total + plan.candidates.length, 0)} non-divider route candidates generated.`,
     data: {
-      edgeCount: assignments.length,
+      edgeCount: routePlans.length,
+      dividerEdgeCount: dividerEdgeIds.size,
+      dividerSegmentCount: routedDividerSegments.paths.length,
       candidateCount: routePlans.reduce((total, plan) => total + plan.candidates.length, 0),
       includeOuterLanes: options.includeOuterLanes
     }
@@ -154,23 +178,17 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
     data: { edgeIds: routePlans.map((plan) => plan.assignment.edge.id) }
   });
 
+  const routedEdges: DiagramEdge[] = [];
   for (const { assignment, candidates } of routePlans) {
-    if (dividerEdgeIds.has(assignment.edge.id)) {
-      const dividerEdge = requireMapValue(anchoredEdgeById, assignment.edge.id, "divider edge");
-      segmentStrategyByEdgeId.set(dividerEdge.id, "divider");
-      routedEdges.push(dividerEdge);
-      continue;
-    }
-
     const selected = selectRouteCandidate(
       assignment.edge,
       candidates,
-      request.document.nodes,
+      routeNodes,
       acceptedPaths,
       {
         includeRecovery: options.includeOuterLanes,
-        source: requireNodeRectangle(requireNode(nodeById, assignment.edge.sourceId)),
-        target: requireNodeRectangle(requireNode(nodeById, assignment.edge.targetId)),
+        source: requireNodeRectangle(requireNode(routeNodeById, assignment.edge.sourceId)),
+        target: requireNodeRectangle(requireNode(routeNodeById, assignment.edge.targetId)),
         sourceAnchor: assignment.sourceAnchor,
         targetAnchor: assignment.targetAnchor,
         bounds: diagramBounds,
@@ -233,9 +251,9 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
   }
 
   const repaired = options.includeOuterLanes && request.intent.routing.maxRepairPasses > 0
-    ? repairRoutedEdges(routedEdges, acceptedPaths, assignments, request, diagramBounds, segmentStrategyByEdgeId)
+    ? repairRoutedEdges(routedEdges, acceptedPaths, assignments, request, routeNodes, diagramBounds, segmentStrategyByEdgeId)
     : { edges: routedEdges, paths: acceptedPaths, accepted: 0, rejected: 0 };
-  emitFinalFallbackEvents(repaired.edges, repaired.paths, request, segmentStrategyByEdgeId);
+  emitFinalFallbackEvents(repaired.edges, repaired.paths, request, routeNodes, segmentStrategyByEdgeId);
   request.context.run.logger.debug({
     phase: "repair",
     type: "repair-complete",
@@ -246,10 +264,11 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
       maxRepairPasses: options.includeOuterLanes ? request.intent.routing.maxRepairPasses : 0
     }
   });
+  const routedEdgeById = new Map([...dividerRoutedEdges, ...repaired.edges].map((edge) => [edge.id, edge]));
+  const finalEdges = request.document.edges.map((edge) => requireMapValue(routedEdgeById, edge.id, "routed edge"));
   const routedEdgesWithSegments = applyEngineOwnedRoutedSegments(
-    repaired.edges,
-    dividers,
-    request.document.nodes,
+    finalEdges,
+    routedDividerSegments.segmentsByEdgeId,
     segmentStrategyByEdgeId
   );
 
@@ -353,11 +372,12 @@ function repairRoutedEdges(
   acceptedPaths: AcceptedPath[],
   assignments: EdgeEndpointAssignment[],
   request: RouteRequest,
+  routeNodes: DiagramNode[],
   diagramBounds: { left: number; right: number; top: number; bottom: number },
   segmentStrategyByEdgeId: Map<string, DiagramRoutedEdgeSegmentStrategy>
 ): { edges: DiagramEdge[]; paths: AcceptedPath[]; accepted: number; rejected: number } {
   const assignmentByEdgeId = new Map(assignments.map((assignment) => [assignment.edge.id, assignment]));
-  const nodeById = new Map(request.document.nodes.map((node) => [node.id, node]));
+  const nodeById = new Map(routeNodes.map((node) => [node.id, node]));
   let currentEdges = routedEdges;
   let currentPaths = acceptedPaths;
   let totalAccepted = 0;
@@ -380,8 +400,8 @@ function repairRoutedEdges(
         points: currentPath.points,
         waypoints: edge.layout?.waypoints ?? []
       };
-      const currentHardFailures = routeHardFailureBreakdown(edge, currentCandidate.points, request.document.nodes, otherPaths).hardFailures;
-      const currentScore = routeCost(edge, currentCandidate, request.document.nodes, otherPaths);
+      const currentHardFailures = routeHardFailureBreakdown(edge, currentCandidate.points, routeNodes, otherPaths).hardFailures;
+      const currentScore = routeCost(edge, currentCandidate, routeNodes, otherPaths);
       const selected = selectRouteCandidate(
         edge,
         routeCandidatesForAnchors(
@@ -395,7 +415,7 @@ function repairRoutedEdges(
           request.intent.routing.outerLaneMargin,
           true
         ),
-        request.document.nodes,
+        routeNodes,
         otherPaths,
         {
           includeRecovery: true,
@@ -480,6 +500,7 @@ function emitFinalFallbackEvents(
   edges: DiagramEdge[],
   paths: AcceptedPath[],
   request: RouteRequest,
+  routeNodes: DiagramNode[],
   segmentStrategyByEdgeId: Map<string, DiagramRoutedEdgeSegmentStrategy>
 ): void {
   for (const edge of edges) {
@@ -499,7 +520,7 @@ function emitFinalFallbackEvents(
     }
 
     const otherPaths = paths.filter((candidate) => candidate.edge.id !== edge.id);
-    const breakdown = routeHardFailureBreakdown(edge, path.points, request.document.nodes, otherPaths);
+    const breakdown = routeHardFailureBreakdown(edge, path.points, routeNodes, otherPaths);
     if (breakdown.hardFailures === 0 && segmentStrategyByEdgeId.get(edge.id) !== "fallback") {
       continue;
     }
@@ -829,26 +850,56 @@ function assignAnchors(edges: DiagramEdge[], nodeById: Map<string, DiagramNode>)
       targetSide: sides.target
     };
   });
+  const primaryEndpointBuckets = new Map<string, Array<{ edge: DiagramEdge; role: "source" | "target"; side: DiagramEdgeAnchorSide; opposite: Rectangle }>>();
   const endpointBuckets = new Map<string, Array<{ edge: DiagramEdge; role: "source" | "target"; side: DiagramEdgeAnchorSide; opposite: Rectangle }>>();
 
   for (const plan of sidePlans) {
     const source = requireNodeRectangle(requireNode(nodeById, plan.edge.sourceId));
     const target = requireNodeRectangle(requireNode(nodeById, plan.edge.targetId));
-    pushEndpoint(endpointBuckets, plan.edge.sourceId, plan.sourceSide, {
+    pushEndpoint(primaryEndpointBuckets, plan.edge.sourceId, plan.sourceSide, {
       edge: plan.edge,
       role: "source",
       side: plan.sourceSide,
       opposite: target
     });
-    pushEndpoint(endpointBuckets, plan.edge.targetId, plan.targetSide, {
+    pushEndpoint(primaryEndpointBuckets, plan.edge.targetId, plan.targetSide, {
       edge: plan.edge,
       role: "target",
       side: plan.targetSide,
       opposite: source
     });
+    for (const side of allAnchorSides()) {
+      pushEndpoint(endpointBuckets, plan.edge.sourceId, side, {
+        edge: plan.edge,
+        role: "source",
+        side,
+        opposite: target
+      });
+      pushEndpoint(endpointBuckets, plan.edge.targetId, side, {
+        edge: plan.edge,
+        role: "target",
+        side,
+        opposite: source
+      });
+    }
   }
 
   const anchorByEndpoint = new Map<string, DiagramEdgeAnchor>();
+  const primaryAnchorByEndpoint = new Map<string, DiagramEdgeAnchor>();
+
+  for (const bucket of primaryEndpointBuckets.values()) {
+    const ordered = [...bucket].sort((left, right) =>
+      endpointSortCoordinate(left.side, left.opposite) - endpointSortCoordinate(right.side, right.opposite) ||
+      left.edge.id.localeCompare(right.edge.id) ||
+      left.role.localeCompare(right.role)
+    );
+    ordered.forEach((endpoint, index) => {
+      primaryAnchorByEndpoint.set(endpointPrimaryKey(endpoint.edge.id, endpoint.role), {
+        side: endpoint.side,
+        ratio: roundRatio((index + 1) / (ordered.length + 1))
+      });
+    });
+  }
 
   for (const bucket of endpointBuckets.values()) {
     const ordered = [...bucket].sort((left, right) =>
@@ -857,7 +908,7 @@ function assignAnchors(edges: DiagramEdge[], nodeById: Map<string, DiagramNode>)
       left.role.localeCompare(right.role)
     );
     ordered.forEach((endpoint, index) => {
-      anchorByEndpoint.set(endpointKey(endpoint.edge.id, endpoint.role), {
+      anchorByEndpoint.set(endpointSideKey(endpoint.edge.id, endpoint.role, endpoint.side), {
         side: endpoint.side,
         ratio: roundRatio((index + 1) / (ordered.length + 1))
       });
@@ -866,8 +917,10 @@ function assignAnchors(edges: DiagramEdge[], nodeById: Map<string, DiagramNode>)
 
   return sidePlans.map((plan) => ({
     edge: plan.edge,
-    sourceAnchor: requireMapValue(anchorByEndpoint, endpointKey(plan.edge.id, "source"), "source anchor"),
-    targetAnchor: requireMapValue(anchorByEndpoint, endpointKey(plan.edge.id, "target"), "target anchor")
+    sourceAnchor: requireMapValue(primaryAnchorByEndpoint, endpointPrimaryKey(plan.edge.id, "source"), "source anchor"),
+    targetAnchor: requireMapValue(primaryAnchorByEndpoint, endpointPrimaryKey(plan.edge.id, "target"), "target anchor"),
+    sourceAnchorsBySide: anchorsBySide(anchorByEndpoint, plan.edge.id, "source"),
+    targetAnchorsBySide: anchorsBySide(anchorByEndpoint, plan.edge.id, "target")
   }));
 }
 
@@ -879,6 +932,23 @@ function pushEndpoint(
 ): void {
   const key = `${nodeId}:${side}`;
   buckets.set(key, [...(buckets.get(key) ?? []), endpoint]);
+}
+
+function anchorsBySide(
+  anchorByEndpoint: Map<string, DiagramEdgeAnchor>,
+  edgeId: string,
+  role: "source" | "target"
+): Record<DiagramEdgeAnchorSide, DiagramEdgeAnchor> {
+  return {
+    north: requireMapValue(anchorByEndpoint, endpointSideKey(edgeId, role, "north"), `${role} north anchor`),
+    east: requireMapValue(anchorByEndpoint, endpointSideKey(edgeId, role, "east"), `${role} east anchor`),
+    south: requireMapValue(anchorByEndpoint, endpointSideKey(edgeId, role, "south"), `${role} south anchor`),
+    west: requireMapValue(anchorByEndpoint, endpointSideKey(edgeId, role, "west"), `${role} west anchor`)
+  };
+}
+
+function allAnchorSides(): DiagramEdgeAnchorSide[] {
+  return ["north", "east", "south", "west"];
 }
 
 function chooseAnchorSides(source: Rectangle, target: Rectangle): { source: DiagramEdgeAnchorSide; target: DiagramEdgeAnchorSide } {
@@ -918,6 +988,7 @@ function routeCandidatesForAnchors(
   const midX = (sourcePort.x + targetPort.x) / 2;
   const midY = (sourcePort.y + targetPort.y) / 2;
   const offsets = deterministicPrivateOffsets(edgeId, edgeIndex);
+  const gapCandidates = gapBetweenCandidates(source, target, sourcePoint, sourcePort, targetPort, targetPoint);
   const baseCandidates = offsets.flatMap((offset) => {
     const xLane = midX + offset;
     const yLane = midY + offset;
@@ -952,7 +1023,7 @@ function routeCandidatesForAnchors(
     ];
   });
   if (!includeOuterLanes) {
-    return uniqueRoutes(baseCandidates);
+    return uniqueRoutes([...gapCandidates, ...baseCandidates]);
   }
 
   const laneOffsets = [0, 1, 2, 3, 4, 5];
@@ -973,7 +1044,40 @@ function routeCandidatesForAnchors(
     outerLaneIndex: laneIndex + 1
   }))));
 
-  return uniqueRoutes([...baseCandidates, ...outerCandidates]);
+  return uniqueRoutes([...gapCandidates, ...baseCandidates, ...outerCandidates]);
+}
+
+function gapBetweenCandidates(
+  source: Rectangle,
+  target: Rectangle,
+  sourcePoint: DiagramPoint,
+  sourcePort: DiagramPoint,
+  targetPort: DiagramPoint,
+  targetPoint: DiagramPoint
+): RouteCandidate[] {
+  const candidates: RouteCandidate[] = [];
+  const sourceRight = source.x + source.width;
+  const targetRight = target.x + target.width;
+  const sourceBottom = source.y + source.height;
+  const targetBottom = target.y + target.height;
+
+  if (sourceRight < target.x) {
+    const gapX = (sourceRight + target.x) / 2;
+    candidates.push(pointsToRoute([sourcePoint, sourcePort, { x: gapX, y: sourcePort.y }, { x: gapX, y: targetPort.y }, targetPort, targetPoint]));
+  } else if (targetRight < source.x) {
+    const gapX = (targetRight + source.x) / 2;
+    candidates.push(pointsToRoute([sourcePoint, sourcePort, { x: gapX, y: sourcePort.y }, { x: gapX, y: targetPort.y }, targetPort, targetPoint]));
+  }
+
+  if (sourceBottom < target.y) {
+    const gapY = (sourceBottom + target.y) / 2;
+    candidates.push(pointsToRoute([sourcePoint, sourcePort, { x: sourcePort.x, y: gapY }, { x: targetPort.x, y: gapY }, targetPort, targetPoint]));
+  } else if (targetBottom < source.y) {
+    const gapY = (targetBottom + source.y) / 2;
+    candidates.push(pointsToRoute([sourcePoint, sourcePort, { x: sourcePort.x, y: gapY }, { x: targetPort.x, y: gapY }, targetPort, targetPoint]));
+  }
+
+  return candidates;
 }
 
 function pointsToRoute(points: DiagramPoint[]): RouteCandidate {
@@ -1027,13 +1131,16 @@ function planRoutingDividers(
   nodes: DiagramNode[],
   threshold: number,
   request: RouteRequest
-): DiagramRoutingDivider[] {
+): DividerPlanResult {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const groupById = new Map((request.document.groups ?? []).map((group) => [group.id, group]));
   const usedEdgeIds = new Set<string>();
   const dividers: DiagramRoutingDivider[] = [];
-  const groups: Array<{ mode: "fanOut" | "fanIn"; commonNodeId: string; edges: DiagramEdge[] }> = [
-    ...groupEdgesByEndpoint(edges, "sourceId").map(([commonNodeId, bucket]) => ({ mode: "fanOut" as const, commonNodeId, edges: bucket })),
-    ...groupEdgesByEndpoint(edges, "targetId").map(([commonNodeId, bucket]) => ({ mode: "fanIn" as const, commonNodeId, edges: bucket }))
+  const diagnostics: DiagramDiagnostic[] = [];
+  const sideSlotsByRemoteGroupId = new Map<string, number>();
+  const groups = [
+    ...groupEdgesByCommonAndRemoteGroup(edges, "sourceId", nodeById).map((group) => ({ ...group, mode: "fanOut" as const })),
+    ...groupEdgesByCommonAndRemoteGroup(edges, "targetId", nodeById).map((group) => ({ ...group, mode: "fanIn" as const }))
   ];
 
   for (const group of groups) {
@@ -1060,12 +1167,40 @@ function planRoutingDividers(
       continue;
     }
 
-    const divider = materializeDivider(group, nodeById, dividers.length);
+    const slotKey = group.remoteGroupId;
+    const sideSlot = sideSlotsByRemoteGroupId.get(slotKey) ?? 0;
+    const sideOverflow = sideSlot >= 2;
+    if (sideOverflow) {
+      const message = `More than two routing dividers share remote group ${group.remoteGroupId}; alternating sides with offsets.`;
+      request.context.run.logger.warn({
+        phase: "divider",
+        type: "divider-side-overflow",
+        message,
+        groupId: group.remoteGroupId,
+        data: {
+          mode: group.mode,
+          commonNodeId: group.commonNodeId,
+          remoteGroupId: group.remoteGroupId,
+          sideSlot
+        }
+      });
+      diagnostics.push({
+        severity: "warning",
+        type: "divider-side-overflow",
+        reason: "divider-side-overflow",
+        message,
+        groupIds: [group.remoteGroupId],
+        data: { mode: group.mode, commonNodeId: group.commonNodeId, remoteGroupId: group.remoteGroupId, sideSlot }
+      });
+    }
+
+    const divider = materializeDivider(group, nodeById, groupById, request, dividers.length, sideSlot);
     if (!divider) {
       continue;
     }
 
     dividers.push(divider);
+    sideSlotsByRemoteGroupId.set(slotKey, sideSlot + 1);
     group.edges.forEach((edge) => usedEdgeIds.add(edge.id));
     request.context.run.logger.info({
       phase: "divider",
@@ -1073,33 +1208,54 @@ function planRoutingDividers(
       message: `${group.mode} routing divider created for ${group.commonNodeId}.`,
       dividerId: divider.id,
       nodeId: group.commonNodeId,
-      data: { edgeIds: group.edges.map((edge) => edge.id) }
+      groupId: divider.remoteGroupId,
+      data: { edgeIds: group.edges.map((edge) => edge.id), remoteGroupId: divider.remoteGroupId, side: divider.side, sideSlot }
     });
   }
 
-  return dividers;
+  return { dividers, diagnostics };
 }
 
-function groupEdgesByEndpoint(edges: DiagramEdge[], endpoint: "sourceId" | "targetId"): Array<[string, DiagramEdge[]]> {
-  const groups = new Map<string, DiagramEdge[]>();
+function groupEdgesByCommonAndRemoteGroup(
+  edges: DiagramEdge[],
+  commonEndpoint: "sourceId" | "targetId",
+  nodeById: Map<string, DiagramNode>
+): Array<{ commonNodeId: string; remoteGroupId: string; remoteNodeIds: string[]; edges: DiagramEdge[] }> {
+  const groups = new Map<string, { commonNodeId: string; remoteGroupId: string; remoteNodeIds: string[]; edges: DiagramEdge[] }>();
+  const remoteEndpoint = commonEndpoint === "sourceId" ? "targetId" : "sourceId";
+
   for (const edge of edges) {
-    groups.set(edge[endpoint], [...(groups.get(edge[endpoint]) ?? []), edge]);
+    const commonNodeId = edge[commonEndpoint];
+    const remoteNodeId = edge[remoteEndpoint];
+    const remoteNode = nodeById.get(remoteNodeId);
+    const remoteGroupId = remoteNode?.groupId ?? `node:${remoteNodeId}`;
+    const key = `${commonNodeId}:${remoteGroupId}`;
+    const current = groups.get(key) ?? { commonNodeId, remoteGroupId, remoteNodeIds: [], edges: [] };
+    groups.set(key, {
+      ...current,
+      remoteNodeIds: [...new Set([...current.remoteNodeIds, remoteNodeId])],
+      edges: [...current.edges, edge]
+    });
   }
-  return [...groups.entries()];
+
+  return [...groups.values()];
 }
 
 function materializeDivider(
-  group: { mode: "fanOut" | "fanIn"; commonNodeId: string; edges: DiagramEdge[] },
+  group: { mode: "fanOut" | "fanIn"; commonNodeId: string; remoteGroupId: string; remoteNodeIds: string[]; edges: DiagramEdge[] },
   nodeById: Map<string, DiagramNode>,
-  index: number
+  groupById: Map<string, DiagramGroup>,
+  request: RouteRequest,
+  index: number,
+  sideSlot: number
 ): DiagramRoutingDivider | undefined {
   const commonNode = nodeById.get(group.commonNodeId);
   if (!commonNode?.layout) {
     return undefined;
   }
 
-  const otherNodes = group.edges
-    .map((edge) => nodeById.get(group.mode === "fanOut" ? edge.targetId : edge.sourceId))
+  const otherNodes = group.remoteNodeIds
+    .map((nodeId) => nodeById.get(nodeId))
     .filter((node): node is DiagramNode => Boolean(node?.layout));
 
   if (otherNodes.length === 0) {
@@ -1107,66 +1263,101 @@ function materializeDivider(
   }
 
   const common = requireNodeRectangle(commonNode);
-  const cluster = rectangleBounds(otherNodes.map((node) => requireNodeRectangle(node)));
+  const remoteGroup = groupById.get(group.remoteGroupId);
+  const cluster = remoteGroup?.layout
+    ? { ...requireLayoutLikeRectangle(remoteGroup.id, remoteGroup.layout), left: remoteGroup.layout.x, right: remoteGroup.layout.x + remoteGroup.layout.width, top: remoteGroup.layout.y, bottom: remoteGroup.layout.y + remoteGroup.layout.height }
+    : rectangleBounds(otherNodes.map((node) => requireNodeRectangle(node)));
+  const allowedSides = dividerSidesForRemoteGroup(group.remoteGroupId, cluster, request);
   const dx = centerX(cluster) - centerX(common);
   const dy = centerY(cluster) - centerY(common);
-  const side: DiagramEdgeAnchorSide = Math.abs(dx) >= Math.abs(dy)
+  const preferredSide: DiagramEdgeAnchorSide = Math.abs(dx) >= Math.abs(dy)
     ? (dx > 0 ? "west" : "east")
     : (dy > 0 ? "north" : "south");
+  const side = dividerSideForSlot(allowedSides, preferredSide, sideSlot);
   const orientation = side === "west" || side === "east" ? "vertical" : "horizontal";
   const offset = anchorStubDistance + routingDividerThickness;
+  const sideOffset = Math.floor(sideSlot / 2) * (anchorStubDistance + routingDividerThickness);
 
   const layout = orientation === "vertical"
     ? {
-      x: side === "west" ? cluster.left - offset : cluster.right + anchorStubDistance,
+      x: side === "west" ? cluster.left - offset - sideOffset : cluster.right + anchorStubDistance + sideOffset,
       y: cluster.top,
       width: routingDividerThickness,
       height: Math.max(routingDividerMinLength, cluster.bottom - cluster.top)
     }
     : {
       x: cluster.left,
-      y: side === "north" ? cluster.top - offset : cluster.bottom + anchorStubDistance,
+      y: side === "north" ? cluster.top - offset - sideOffset : cluster.bottom + anchorStubDistance + sideOffset,
       width: Math.max(routingDividerMinLength, cluster.right - cluster.left),
       height: routingDividerThickness
     };
 
   return {
-    id: `routing_divider_${index + 1}_${group.mode}_${group.commonNodeId}_${side}`,
+    id: `routing_divider_${index + 1}_${group.mode}_${group.commonNodeId}_${safeIdPart(group.remoteGroupId)}_${side}`,
     orientation,
     side,
     sourceEdgeIds: group.edges.map((edge) => edge.id),
     mode: group.mode,
-    layout
+    layout,
+    commonNodeId: group.commonNodeId,
+    remoteGroupId: group.remoteGroupId,
+    remoteNodeIds: group.remoteNodeIds,
+    sideSlot,
+    sideOffset
   };
+}
+
+function dividerSidesForRemoteGroup(
+  remoteGroupId: string,
+  cluster: Rectangle,
+  request: RouteRequest
+): [DiagramEdgeAnchorSide, DiagramEdgeAnchorSide] {
+  const packing = request.intent.groups[remoteGroupId]?.packing;
+  if (packing === "horizontal") {
+    return ["north", "south"];
+  }
+  if (packing === "vertical") {
+    return ["west", "east"];
+  }
+
+  return cluster.width >= cluster.height
+    ? ["north", "south"]
+    : ["west", "east"];
+}
+
+function dividerSideForSlot(
+  allowedSides: [DiagramEdgeAnchorSide, DiagramEdgeAnchorSide],
+  preferredSide: DiagramEdgeAnchorSide,
+  sideSlot: number
+): DiagramEdgeAnchorSide {
+  const firstSide = allowedSides.includes(preferredSide)
+    ? preferredSide
+    : allowedSides[0];
+  const secondSide = allowedSides.find((side) => side !== firstSide) ?? allowedSides[1];
+  return sideSlot % 2 === 0 ? firstSide : secondSide;
+}
+
+function requireLayoutLikeRectangle(id: string, layout: { x: number; y: number; width: number; height: number }): Rectangle {
+  return {
+    id,
+    x: layout.x,
+    y: layout.y,
+    width: layout.width,
+    height: layout.height
+  };
+}
+
+function safeIdPart(value: string): string {
+  return value.replace(/[^A-Za-z0-9_:-]+/g, "_");
 }
 
 function applyEngineOwnedRoutedSegments(
   edges: DiagramEdge[],
-  dividers: DiagramRoutingDivider[],
-  nodes: DiagramNode[],
+  dividerSegmentsByEdgeId: Map<string, DiagramRoutedEdgeSegment[]>,
   segmentStrategyByEdgeId: Map<string, DiagramRoutedEdgeSegmentStrategy>
 ): DiagramEdge[] {
-  const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
-  const segmentsByEdgeId = new Map<string, DiagramRoutedEdgeSegment[]>();
-  const dividerEdgeIds = new Set(dividers.flatMap((divider) => divider.sourceEdgeIds));
-  const occupancy: AcceptedPath[] = edges
-    .filter((edge) => !dividerEdgeIds.has(edge.id))
-    .map((edge) => ({ edge, points: edgeRoutePoints(edge, nodes) }))
-    .filter((path) => path.points.length >= 2);
-  const bounds = rectangleBounds(nodes.map((node) => requireNodeRectangle(node)));
-
-  for (const divider of dividers) {
-    const dividerEdges = divider.sourceEdgeIds
-      .map((edgeId) => edgeById.get(edgeId))
-      .filter((edge): edge is DiagramEdge => Boolean(edge));
-
-    for (const { edge, segment } of splitDividerSegments(divider, dividerEdges, nodes, occupancy, bounds)) {
-      segmentsByEdgeId.set(edge.id, [...(segmentsByEdgeId.get(edge.id) ?? []), segment]);
-    }
-  }
-
   return edges.map((edge) => {
-    const routedSegments = segmentsByEdgeId.get(edge.id) ?? [directRoutedSegment(edge, segmentStrategyByEdgeId.get(edge.id) ?? "direct")];
+    const routedSegments = dividerSegmentsByEdgeId.get(edge.id) ?? [directRoutedSegment(edge, segmentStrategyByEdgeId.get(edge.id) ?? "direct")];
     return {
       ...edge,
       layout: {
@@ -1178,20 +1369,26 @@ function applyEngineOwnedRoutedSegments(
   });
 }
 
-function buildDividerOccupancyPaths(
+function routeDividerSegments(
   dividers: DiagramRoutingDivider[],
   edgeById: Map<string, DiagramEdge>,
-  nodes: DiagramNode[],
+  assignmentByEdgeId: Map<string, EdgeEndpointAssignment>,
+  routeNodes: DiagramNode[],
   bounds: { left: number; right: number; top: number; bottom: number }
-): AcceptedPath[] {
+): { segmentsByEdgeId: Map<string, DiagramRoutedEdgeSegment[]>; paths: AcceptedPath[] } {
   const occupancy: AcceptedPath[] = [];
+  const segmentsByEdgeId = new Map<string, DiagramRoutedEdgeSegment[]>();
+
   for (const divider of dividers) {
     const dividerEdges = divider.sourceEdgeIds
       .map((edgeId) => edgeById.get(edgeId))
       .filter((edge): edge is DiagramEdge => Boolean(edge));
-    splitDividerSegments(divider, dividerEdges, nodes, occupancy, bounds);
+    for (const { edge, segment } of splitDividerSegments(divider, dividerEdges, assignmentByEdgeId, routeNodes, occupancy, bounds)) {
+      segmentsByEdgeId.set(edge.id, [...(segmentsByEdgeId.get(edge.id) ?? []), segment]);
+    }
   }
-  return occupancy;
+
+  return { segmentsByEdgeId, paths: occupancy };
 }
 
 function directRoutedSegment(edge: DiagramEdge, strategy: DiagramRoutedEdgeSegmentStrategy): DiagramRoutedEdgeSegment {
@@ -1211,27 +1408,29 @@ function directRoutedSegment(edge: DiagramEdge, strategy: DiagramRoutedEdgeSegme
 function splitDividerSegments(
   divider: DiagramRoutingDivider,
   edges: DiagramEdge[],
+  assignmentByEdgeId: Map<string, EdgeEndpointAssignment>,
   nodes: DiagramNode[],
   occupancy: AcceptedPath[],
   bounds: { left: number; right: number; top: number; bottom: number }
-): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment; points: DiagramPoint[] }> {
+): RoutedDividerSegment[] {
   return divider.mode === "fanOut"
-    ? fanOutDividerSegments(divider, edges, nodes, occupancy, bounds)
-    : fanInDividerSegments(divider, edges, nodes, occupancy, bounds);
+    ? fanOutDividerSegments(divider, edges, assignmentByEdgeId, nodes, occupancy, bounds)
+    : fanInDividerSegments(divider, edges, assignmentByEdgeId, nodes, occupancy, bounds);
 }
 
 function fanOutDividerSegments(
   divider: DiagramRoutingDivider,
   edges: DiagramEdge[],
+  assignmentByEdgeId: Map<string, EdgeEndpointAssignment>,
   nodes: DiagramNode[],
   occupancy: AcceptedPath[],
   bounds: { left: number; right: number; top: number; bottom: number }
-): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment; points: DiagramPoint[] }> {
+): RoutedDividerSegment[] {
   if (edges.length === 0) {
     return [];
   }
   const firstEdge = edges[0];
-  const sourceAnchor = sharedClassAnchor(edges, "source") ?? classAnchorTowardDivider(firstEdge, "source", divider);
+  const sourceAnchor = classAnchorTowardDivider(firstEdge, "source", divider, nodes, assignmentByEdgeId);
   const dividerInputAnchor = dividerOuterAnchor(divider);
   const orderedLeaves = orderEdgesForDivider(divider, edges, "target", oppositeSide(divider.side), nodes);
   const trunk = createDividerSegment({
@@ -1263,7 +1462,7 @@ function fanOutDividerSegments(
         targetId: edge.targetId,
         label: edge.label ?? "",
         sourceAnchor: dividerAnchor,
-        targetAnchor: classAnchorForDividerSide(edge, "target", dividerAnchor.side),
+        targetAnchor: classAnchorForDividerSide(edge, "target", dividerAnchor.side, assignmentByEdgeId),
         markerPolicy: { start: false, end: true },
         nodes,
         divider,
@@ -1282,19 +1481,39 @@ function fanOutDividerSegments(
 function fanInDividerSegments(
   divider: DiagramRoutingDivider,
   edges: DiagramEdge[],
+  assignmentByEdgeId: Map<string, EdgeEndpointAssignment>,
   nodes: DiagramNode[],
   occupancy: AcceptedPath[],
   bounds: { left: number; right: number; top: number; bottom: number }
-): Array<{ edge: DiagramEdge; segment: DiagramRoutedEdgeSegment; points: DiagramPoint[] }> {
+): RoutedDividerSegment[] {
   if (edges.length === 0) {
     return [];
   }
   const firstEdge = edges[0];
-  const targetAnchor = sharedClassAnchor(edges, "target") ?? classAnchorTowardDivider(firstEdge, "target", divider);
+  const targetAnchor = classAnchorTowardDivider(firstEdge, "target", divider, nodes, assignmentByEdgeId);
   const dividerOutputAnchor = dividerOuterAnchor(divider);
   const orderedLeaves = orderEdgesForDivider(divider, edges, "source", oppositeSide(divider.side), nodes);
+  const trunk = createDividerSegment({
+    edge: firstEdge,
+    segmentId: `${firstEdge.id}:divider-trunk`,
+    sourceId: divider.id,
+    targetId: firstEdge.targetId,
+    label: "",
+    sourceAnchor: dividerOutputAnchor,
+    targetAnchor,
+    markerPolicy: { start: false, end: true },
+    nodes,
+    divider,
+    occupancy,
+    bounds
+  });
+  occupancy.push({
+    edge: { ...firstEdge, id: trunk.segment.id, sourceId: trunk.segment.sourceId, targetId: trunk.segment.targetId },
+    points: trunk.points
+  });
 
   return [
+    { edge: firstEdge, segment: trunk.segment, points: trunk.points },
     ...orderedLeaves.map(({ edge, dividerAnchor }) => {
       const leaf = createDividerSegment({
         edge,
@@ -1302,7 +1521,7 @@ function fanInDividerSegments(
         sourceId: edge.sourceId,
         targetId: divider.id,
         label: edge.label ?? "",
-        sourceAnchor: classAnchorForDividerSide(edge, "source", dividerAnchor.side),
+        sourceAnchor: classAnchorForDividerSide(edge, "source", dividerAnchor.side, assignmentByEdgeId),
         targetAnchor: dividerAnchor,
         markerPolicy: { start: true, end: false },
         nodes,
@@ -1315,28 +1534,7 @@ function fanInDividerSegments(
         points: leaf.points
       });
       return { edge, segment: leaf.segment, points: leaf.points };
-    }),
-    (() => {
-      const trunk = createDividerSegment({
-        edge: firstEdge,
-        segmentId: `${firstEdge.id}:divider-trunk`,
-        sourceId: divider.id,
-        targetId: firstEdge.targetId,
-        label: "",
-        sourceAnchor: dividerOutputAnchor,
-        targetAnchor,
-        markerPolicy: { start: false, end: true },
-        nodes,
-        divider,
-        occupancy,
-        bounds
-      });
-      occupancy.push({
-        edge: { ...firstEdge, id: trunk.segment.id, sourceId: trunk.segment.sourceId, targetId: trunk.segment.targetId },
-        points: trunk.points
-      });
-      return { edge: firstEdge, segment: trunk.segment, points: trunk.points };
-    })()
+    })
   ];
 }
 
@@ -1418,21 +1616,42 @@ function edgeRoutePoints(edge: DiagramEdge, nodes: DiagramNode[]): DiagramPoint[
 }
 
 function endpointRectangle(endpointId: string, nodes: DiagramNode[], divider: DiagramRoutingDivider): Rectangle {
-  if (endpointId === divider.id) {
-    return {
-      id: divider.id,
-      x: divider.layout.x,
-      y: divider.layout.y,
-      width: divider.layout.width,
-      height: divider.layout.height
-    };
+  const node = nodes.find((candidate) => candidate.id === endpointId);
+  if (node?.layout) {
+    return requireNodeRectangle(node);
   }
 
-  const node = nodes.find((candidate) => candidate.id === endpointId);
-  if (!node) {
-    throw new Error(`Missing endpoint ${endpointId}.`);
+  if (endpointId === divider.id) {
+    return dividerRectangle(divider);
   }
-  return requireNodeRectangle(node);
+
+  throw new Error(`Missing endpoint ${endpointId}.`);
+}
+
+function dividerObstacleNodes(dividers: DiagramRoutingDivider[]): DiagramNode[] {
+  return dividers.map((divider) => ({
+    id: divider.id,
+    label: divider.id,
+    kind: "class" as const,
+    attributes: [],
+    methods: [],
+    layout: {
+      ...divider.layout,
+      headerHeight: divider.layout.height,
+      lineHeight: divider.layout.height,
+      separatorHeight: 0
+    }
+  }));
+}
+
+function dividerRectangle(divider: DiagramRoutingDivider): Rectangle {
+  return {
+    id: divider.id,
+    x: divider.layout.x,
+    y: divider.layout.y,
+    width: divider.layout.width,
+    height: divider.layout.height
+  };
 }
 
 function simpleSplitWaypoints(
@@ -1493,46 +1712,50 @@ function dividerOuterAnchor(divider: DiagramRoutingDivider): DiagramEdgeAnchor {
   };
 }
 
-function classAnchorTowardDivider(edge: DiagramEdge, endpoint: "source" | "target", divider: DiagramRoutingDivider): DiagramEdgeAnchor {
-  const anchor = endpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
-  if (anchor) {
-    return anchor;
-  }
-
-  return {
-    side: oppositeSide(divider.side),
-    ratio: 0.5
-  };
-}
-
-function classAnchorForDividerSide(edge: DiagramEdge, endpoint: "source" | "target", dividerSide: DiagramEdgeAnchorSide): DiagramEdgeAnchor {
-  const desiredSide = oppositeSide(dividerSide);
-  const existing = endpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
-
-  return {
+function classAnchorTowardDivider(
+  edge: DiagramEdge,
+  endpoint: "source" | "target",
+  divider: DiagramRoutingDivider,
+  nodes: DiagramNode[],
+  assignmentByEdgeId: Map<string, EdgeEndpointAssignment>
+): DiagramEdgeAnchor {
+  const endpointId = endpoint === "source" ? edge.sourceId : edge.targetId;
+  const node = nodes.find((candidate) => candidate.id === endpointId);
+  const desiredSide = node?.layout
+    ? chooseAnchorSides(requireNodeRectangle(node), dividerRectangle(divider)).source
+    : oppositeSide(divider.side);
+  return endpointSideAnchor(edge.id, endpoint, desiredSide, assignmentByEdgeId) ?? {
     side: desiredSide,
-    ratio: existing?.side === desiredSide ? existing.ratio : stableAnchorRatio(edge.id)
+    ratio: stableAnchorRatio(`${edge.id}:${endpoint}:${desiredSide}`)
   };
 }
 
-function sharedClassAnchor(edges: DiagramEdge[], endpoint: "source" | "target"): DiagramEdgeAnchor | undefined {
-  const anchors = edges
-    .map((edge) => endpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor)
-    .filter((anchor): anchor is DiagramEdgeAnchor => Boolean(anchor));
+function classAnchorForDividerSide(
+  edge: DiagramEdge,
+  endpoint: "source" | "target",
+  dividerSide: DiagramEdgeAnchorSide,
+  assignmentByEdgeId: Map<string, EdgeEndpointAssignment>
+): DiagramEdgeAnchor {
+  const desiredSide = oppositeSide(dividerSide);
+  return endpointSideAnchor(edge.id, endpoint, desiredSide, assignmentByEdgeId) ?? {
+    side: desiredSide,
+    ratio: stableAnchorRatio(`${edge.id}:${endpoint}:${desiredSide}`)
+  };
+}
 
-  if (anchors.length === 0) {
+function endpointSideAnchor(
+  edgeId: string,
+  endpoint: "source" | "target",
+  side: DiagramEdgeAnchorSide,
+  assignmentByEdgeId: Map<string, EdgeEndpointAssignment>
+): DiagramEdgeAnchor | undefined {
+  const assignment = assignmentByEdgeId.get(edgeId);
+  if (!assignment) {
     return undefined;
   }
-
-  const side = anchors[0].side;
-  if (!anchors.every((anchor) => anchor.side === side)) {
-    return anchors[0];
-  }
-
-  return {
-    side,
-    ratio: 0.5
-  };
+  return endpoint === "source"
+    ? assignment.sourceAnchorsBySide[side]
+    : assignment.targetAnchorsBySide[side];
 }
 
 function stableAnchorRatio(value: string): number {
@@ -1661,7 +1884,7 @@ function countEdgeNodeHits(edge: DiagramEdge, points: DiagramPoint[], nodes: Dia
 
   for (const [start, end] of segments) {
     for (const node of nodes) {
-      if (node.id === edge.sourceId || node.id === edge.targetId || !node.layout) {
+      if (!node.layout) {
         continue;
       }
       if (segmentIntersectsRectangle(start, end, node.layout)) {
@@ -1921,7 +2144,11 @@ function routesEqual(left: DiagramPoint[], right: DiagramPoint[]): boolean {
   return left.length === right.length && left.every((point, index) => pointsEqual(point, right[index]));
 }
 
-function endpointKey(edgeId: string, role: "source" | "target"): string {
+function endpointSideKey(edgeId: string, role: "source" | "target", side: DiagramEdgeAnchorSide): string {
+  return `${edgeId}:${role}:${side}`;
+}
+
+function endpointPrimaryKey(edgeId: string, role: "source" | "target"): string {
   return `${edgeId}:${role}`;
 }
 

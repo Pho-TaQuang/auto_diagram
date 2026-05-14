@@ -10,8 +10,9 @@ Artifacts:
 
 Gate:
 
-- fan-out divider allowed only when one source has more than four routed edges
-- fan-in divider allowed only when one target has more than four routed edges
+- fan-out divider allowed only when one source has more than four routed edges to the same remote group
+- fan-in divider allowed only when one target has more than four routed edges from the same remote group
+- remote groups are bucketed independently
 - `A1->B1`, `A2->B2`, `A3->B3` is not bundled
 
 Targeted test:

@@ -34,9 +34,12 @@ export type Visibility = "+" | "-" | "#" | "~";
 
 export type LayoutDiagnosticReason =
   | "edge-node-hit"
+  | "divider-node-hit"
+  | "endpoint-divider-interior-hit"
   | "illegal-segment-overlap"
   | "routing-failure"
   | "invalid-divider"
+  | "divider-side-overflow"
   | "edge-crossing";
 
 export type LayoutRecommendedAction =
@@ -68,7 +71,7 @@ export type DiagramDiagnostic = {
   severity: DiagnosticSeverity;
   message: string;
   line?: number;
-  type?: "layout-change-required" | "edge-crossing";
+  type?: "layout-change-required" | "edge-crossing" | "divider-side-overflow";
   reason?: LayoutDiagnosticReason;
   edgeIds?: string[];
   groupIds?: string[];
@@ -144,6 +147,9 @@ export type DiagramLayoutScore = {
   layoutWidth: number;
   layoutHeight: number;
   layoutArea: number;
+  dividerNodeHits?: number;
+  endpointDividerInteriorHits?: number;
+  dividerSideOverflow?: number;
   edgeIdentityViolations?: number;
   illegalSegmentOverlaps?: number;
   outerLaneUsages?: number;
@@ -235,6 +241,11 @@ export type DiagramRoutingDivider = {
   sourceEdgeIds: string[];
   mode: DiagramRoutingDividerMode;
   layout: DiagramRoutingDividerLayout;
+  commonNodeId?: string;
+  remoteGroupId?: string;
+  remoteNodeIds?: string[];
+  sideSlot?: number;
+  sideOffset?: number;
 };
 
 export type DiagramDocument = {

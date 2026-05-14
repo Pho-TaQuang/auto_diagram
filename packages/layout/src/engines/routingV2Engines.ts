@@ -177,6 +177,9 @@ function runRoutingV2(
         ...score,
         edgeIdentityViolations: routingSummary.edgeIdentityViolations,
         illegalSegmentOverlaps: routingSummary.illegalSegmentOverlaps,
+        dividerNodeHits: routingSummary.dividerNodeHits,
+        endpointDividerInteriorHits: routingSummary.endpointDividerInteriorHits,
+        dividerSideOverflow: routingSummary.dividerSideOverflow,
         outerLaneUsages: routingSummary.outerLaneUsages,
         routingFailures: routingSummary.routingFailures
       },

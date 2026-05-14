@@ -31,9 +31,12 @@ export type RoutingSummary = {
   nodeOverlaps: number;
   groupOverlaps: number;
   edgeNodeHits: number;
+  dividerNodeHits: number;
+  endpointDividerInteriorHits: number;
   edgeCrossings: number;
   segmentOverlaps: number;
   illegalSegmentOverlaps: number;
+  dividerSideOverflow: number;
   edgeIdentityViolations: number;
   invalidDividers: number;
   outerLaneUsages: number;
@@ -49,10 +52,17 @@ Structured routing diagnostics use these public diagnostic shapes:
 type LayoutChangeRequiredDiagnostic = {
   type: "layout-change-required";
   severity: "error";
-  reason: "edge-node-hit" | "illegal-segment-overlap" | "routing-failure" | "invalid-divider";
+  reason: "edge-node-hit" | "divider-node-hit" | "endpoint-divider-interior-hit" | "illegal-segment-overlap" | "routing-failure" | "invalid-divider";
   edgeIds: string[];
   groupIds: string[];
   recommendedAction?: LayoutRecommendedAction;
+};
+
+type DividerSideOverflowDiagnostic = {
+  type: "divider-side-overflow";
+  severity: "warning";
+  reason: "divider-side-overflow";
+  groupIds: string[];
 };
 
 type EdgeCrossingDiagnostic = {
@@ -79,3 +89,5 @@ route-complete
 `route-complete` must include the validation status in event data and must not be emitted before validation.
 
 `routing-fallback-used` is reserved for final unrecovered routes after recovery and repair have failed. Intermediate failed candidates are trace/debug recovery events, not final warning/error diagnostics.
+
+`divider-side-overflow` is a warning diagnostic. It means more than two dividers target the same remote group, so the router alternated the allowed sides with deterministic offsets.

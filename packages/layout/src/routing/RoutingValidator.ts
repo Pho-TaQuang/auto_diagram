@@ -40,6 +40,7 @@ export type RoutingPath = {
   edge: DiagramEdge;
   points: DiagramPoint[];
   terminalIds: Set<string>;
+  terminalDividerIds: Set<string>;
   segmentId?: string;
   trunkDividerId?: string;
 };
@@ -53,6 +54,9 @@ export type RoutingValidationResult = {
   illegalSegmentOverlaps: number;
   invalidDividers: number;
   edgeNodeHits: number;
+  dividerNodeHits: number;
+  endpointDividerInteriorHits: number;
+  dividerSideOverflow: number;
   segmentOverlaps: number;
   edgeCrossings: number;
   validEdges: number;
@@ -74,6 +78,9 @@ export function validateRoutedDocument(
   let illegalSegmentOverlaps = 0;
   let invalidDividers = 0;
   let edgeNodeHits = 0;
+  let dividerNodeHits = 0;
+  let endpointDividerInteriorHits = 0;
+  let dividerSideOverflow = 0;
   let segmentOverlaps = 0;
   let edgeCrossings = 0;
   const errors: LayoutLogEvent[] = [];
@@ -82,9 +89,21 @@ export function validateRoutedDocument(
   const originalEdgeById = new Map(originalDocument.edges.map((edge) => [edge.id, edge]));
   const routedEdgeById = new Map(document.edges.map((edge) => [edge.id, edge]));
   const edgeResultsById = new Map(document.edges.map((edge) => [edge.id, createEdgeResult(edge.id)]));
-  const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
 
   for (const event of events) {
+    if (event.type === "divider-side-overflow") {
+      dividerSideOverflow += 1;
+      diagnostics.push({
+        severity: "warning",
+        type: "divider-side-overflow",
+        reason: "divider-side-overflow",
+        message: event.message,
+        groupIds: event.groupId ? [event.groupId] : [],
+        data: event.data
+      });
+      continue;
+    }
+
     if ((event.type !== "routing-fallback-used" && event.type !== "routing-failed") || !event.edgeId) {
       continue;
     }
@@ -132,17 +151,32 @@ export function validateRoutedDocument(
 
   const paths = collectRoutingPaths(document, validDividerById).filter((path) => path.points.length >= 2);
   const nodeHitsByEdgeId = new Map<string, RoutingNodeHitRef[]>();
+  const dividerHitsByEdgeId = new Map<string, RoutingNodeHitRef[]>();
+  const endpointDividerHitsByEdgeId = new Map<string, RoutingNodeHitRef[]>();
 
   for (const path of paths) {
-    const hits = collectRouteNodeHits(path, document.nodes);
-    if (hits.length === 0) {
-      continue;
+    const hits = collectRouteObstacleHits(path, document.nodes, document.routingDividers ?? []);
+    if (hits.nodeHits.length > 0) {
+      edgeNodeHits += hits.nodeHits.length;
+      nodeHitsByEdgeId.set(path.edge.id, [...(nodeHitsByEdgeId.get(path.edge.id) ?? []), ...hits.nodeHits]);
+      const result = requireEdgeResult(edgeResultsById, path.edge.id);
+      result.nodeHits.push(...hits.nodeHits);
+      invalidEdgeIds.add(path.edge.id);
     }
-    edgeNodeHits += hits.length;
-    nodeHitsByEdgeId.set(path.edge.id, [...(nodeHitsByEdgeId.get(path.edge.id) ?? []), ...hits]);
-    const result = requireEdgeResult(edgeResultsById, path.edge.id);
-    result.nodeHits.push(...hits);
-    invalidEdgeIds.add(path.edge.id);
+    if (hits.dividerNodeHits.length > 0) {
+      dividerNodeHits += hits.dividerNodeHits.length;
+      dividerHitsByEdgeId.set(path.edge.id, [...(dividerHitsByEdgeId.get(path.edge.id) ?? []), ...hits.dividerNodeHits]);
+      const result = requireEdgeResult(edgeResultsById, path.edge.id);
+      result.dividerNodeHits.push(...hits.dividerNodeHits);
+      invalidEdgeIds.add(path.edge.id);
+    }
+    if (hits.endpointDividerInteriorHits.length > 0) {
+      endpointDividerInteriorHits += hits.endpointDividerInteriorHits.length;
+      endpointDividerHitsByEdgeId.set(path.edge.id, [...(endpointDividerHitsByEdgeId.get(path.edge.id) ?? []), ...hits.endpointDividerInteriorHits]);
+      const result = requireEdgeResult(edgeResultsById, path.edge.id);
+      result.endpointDividerInteriorHits.push(...hits.endpointDividerInteriorHits);
+      invalidEdgeIds.add(path.edge.id);
+    }
   }
 
   for (const [edgeId, hits] of nodeHitsByEdgeId) {
@@ -150,15 +184,49 @@ export function validateRoutedDocument(
     pushValidationError(context, errors, {
       phase: "validate",
       type: "edge-node-hit",
-      message: `Edge ${edgeId} crosses ${hits.length} non-terminal node${hits.length === 1 ? "" : "s"}.`,
+      message: `Edge ${edgeId} crosses ${hits.length} class node interior${hits.length === 1 ? "" : "s"}.`,
       edgeId,
       data: { nodeHits: hits.length, nodeIds }
     });
     diagnostics.push(layoutChangeDiagnostic({
       reason: "edge-node-hit",
-      message: `Edge ${edgeId} crosses non-terminal node${hits.length === 1 ? "" : "s"}: ${nodeIds.join(", ")}.`,
+      message: `Edge ${edgeId} crosses class node interior${hits.length === 1 ? "" : "s"}: ${nodeIds.join(", ")}.`,
       edgeIds: [edgeId],
       groupIds: groupIdsForEdgeIds(document, [edgeId], nodeIds)
+    }));
+  }
+
+  for (const [edgeId, hits] of dividerHitsByEdgeId) {
+    const dividerHitIds = unique(hits.map((hit) => hit.nodeId));
+    pushValidationError(context, errors, {
+      phase: "validate",
+      type: "divider-node-hit",
+      message: `Edge ${edgeId} crosses routing divider${hits.length === 1 ? "" : "s"}: ${dividerHitIds.join(", ")}.`,
+      edgeId,
+      data: { dividerNodeHits: hits.length, dividerIds: dividerHitIds }
+    });
+    diagnostics.push(layoutChangeDiagnostic({
+      reason: "divider-node-hit",
+      message: `Edge ${edgeId} crosses routing divider${hits.length === 1 ? "" : "s"}: ${dividerHitIds.join(", ")}.`,
+      edgeIds: [edgeId],
+      groupIds: groupIdsForEdgeIds(document, [edgeId])
+    }));
+  }
+
+  for (const [edgeId, hits] of endpointDividerHitsByEdgeId) {
+    const dividerHitIds = unique(hits.map((hit) => hit.nodeId));
+    pushValidationError(context, errors, {
+      phase: "validate",
+      type: "endpoint-divider-interior-hit",
+      message: `Edge ${edgeId} crosses the interior of endpoint divider${hits.length === 1 ? "" : "s"}: ${dividerHitIds.join(", ")}.`,
+      edgeId,
+      data: { endpointDividerInteriorHits: hits.length, dividerIds: dividerHitIds }
+    });
+    diagnostics.push(layoutChangeDiagnostic({
+      reason: "endpoint-divider-interior-hit",
+      message: `Edge ${edgeId} crosses endpoint divider interior${hits.length === 1 ? "" : "s"}: ${dividerHitIds.join(", ")}.`,
+      edgeIds: [edgeId],
+      groupIds: groupIdsForEdgeIds(document, [edgeId])
     }));
   }
 
@@ -173,33 +241,31 @@ export function validateRoutedDocument(
       for (const leftSegment of pathSegmentsWithRefs(left)) {
         for (const rightSegment of pathSegmentsWithRefs(right)) {
           if (segmentsOverlap(leftSegment.start, leftSegment.end, rightSegment.start, rightSegment.end)) {
-            const dividerExempt = isDividerTrunkOverlapExempt(left, right);
+            const dividerExempt = false;
             const leftOverlap = segmentOverlapRef(right.edge.id, leftSegment.ref, rightSegment.ref, dividerExempt);
             const rightOverlap = segmentOverlapRef(left.edge.id, rightSegment.ref, leftSegment.ref, dividerExempt);
             segmentOverlaps += 1;
             requireEdgeResult(edgeResultsById, left.edge.id).segmentOverlaps.push(leftOverlap);
             requireEdgeResult(edgeResultsById, right.edge.id).segmentOverlaps.push(rightOverlap);
 
-            if (!dividerExempt) {
-              illegalSegmentOverlaps += 1;
-              requireEdgeResult(edgeResultsById, left.edge.id).illegalSegmentOverlaps.push(leftOverlap);
-              requireEdgeResult(edgeResultsById, right.edge.id).illegalSegmentOverlaps.push(rightOverlap);
-              invalidEdgeIds.add(left.edge.id);
-              invalidEdgeIds.add(right.edge.id);
-              pushValidationError(context, errors, {
-                phase: "validate",
-                type: "illegal-segment-overlap",
-                message: `Edges ${left.edge.id} and ${right.edge.id} share a route segment outside a valid divider.`,
-                edgeId: left.edge.id,
-                data: { otherEdgeId: right.edge.id, segment: leftSegment.ref, otherSegment: rightSegment.ref }
-              });
-              diagnostics.push(layoutChangeDiagnostic({
-                reason: "illegal-segment-overlap",
-                message: `Edges ${left.edge.id} and ${right.edge.id} share a route segment outside a valid divider.`,
-                edgeIds: [left.edge.id, right.edge.id],
-                groupIds: groupIdsForEdgeIds(document, [left.edge.id, right.edge.id])
-              }));
-            }
+            illegalSegmentOverlaps += 1;
+            requireEdgeResult(edgeResultsById, left.edge.id).illegalSegmentOverlaps.push(leftOverlap);
+            requireEdgeResult(edgeResultsById, right.edge.id).illegalSegmentOverlaps.push(rightOverlap);
+            invalidEdgeIds.add(left.edge.id);
+            invalidEdgeIds.add(right.edge.id);
+            pushValidationError(context, errors, {
+              phase: "validate",
+              type: "illegal-segment-overlap",
+              message: `Edges ${left.edge.id} and ${right.edge.id} share a route segment.`,
+              edgeId: left.edge.id,
+              data: { otherEdgeId: right.edge.id, segment: leftSegment.ref, otherSegment: rightSegment.ref }
+            });
+            diagnostics.push(layoutChangeDiagnostic({
+              reason: "illegal-segment-overlap",
+              message: `Edges ${left.edge.id} and ${right.edge.id} share a route segment.`,
+              edgeIds: [left.edge.id, right.edge.id],
+              groupIds: groupIdsForEdgeIds(document, [left.edge.id, right.edge.id])
+            }));
             continue;
           }
 
@@ -240,13 +306,17 @@ export function validateRoutedDocument(
   const edgeResults = [...edgeResultsById.values()].map((result) => ({
     ...result,
     nodeHits: sortNodeHits(result.nodeHits),
+    dividerNodeHits: sortNodeHits(result.dividerNodeHits),
+    endpointDividerInteriorHits: sortNodeHits(result.endpointDividerInteriorHits),
     edgeCrossings: sortCrossings(result.edgeCrossings),
     segmentOverlaps: sortOverlaps(result.segmentOverlaps),
     illegalSegmentOverlaps: sortOverlaps(result.illegalSegmentOverlaps),
     invalidDividers: unique(result.invalidDividers).sort(),
     edgeIdentityViolations: unique(result.edgeIdentityViolations).sort(),
     hardValid: result.nodeHits.length === 0 &&
-      result.illegalSegmentOverlaps.length === 0 &&
+      result.dividerNodeHits.length === 0 &&
+      result.endpointDividerInteriorHits.length === 0 &&
+      result.segmentOverlaps.length === 0 &&
       !result.routingFallbackUsed &&
       !result.routingFailed &&
       result.invalidDividers.length === 0 &&
@@ -265,7 +335,9 @@ export function validateRoutedDocument(
   return {
     valid: edgeIdentityViolations === 0 &&
       edgeNodeHits === 0 &&
-      illegalSegmentOverlaps === 0 &&
+      dividerNodeHits === 0 &&
+      endpointDividerInteriorHits === 0 &&
+      segmentOverlaps === 0 &&
       invalidDividers === 0 &&
       edgeResults.every((result) => !result.routingFallbackUsed && !result.routingFailed),
     errors,
@@ -275,6 +347,9 @@ export function validateRoutedDocument(
     illegalSegmentOverlaps,
     invalidDividers,
     edgeNodeHits,
+    dividerNodeHits,
+    endpointDividerInteriorHits,
+    dividerSideOverflow,
     segmentOverlaps,
     edgeCrossings,
     validEdges,
@@ -304,6 +379,7 @@ export function collectRoutingPaths(
           segmentId: segment.id,
           trunkDividerId: trunkDividerIdForSegment(segment, validDividerById),
           terminalIds: new Set([segment.sourceId, segment.targetId]),
+          terminalDividerIds: new Set([segment.sourceId, segment.targetId].filter((id) => endpointById.has(id) && (document.routingDividers ?? []).some((divider) => divider.id === id))),
           points: pathPoints(
             source,
             target,
@@ -324,6 +400,7 @@ export function collectRoutingPaths(
     paths.push({
       edge,
       terminalIds: new Set([edge.sourceId, edge.targetId]),
+      terminalDividerIds: new Set([edge.sourceId, edge.targetId].filter((id) => (document.routingDividers ?? []).some((divider) => divider.id === id))),
       points: pathPoints(
         source,
         target,
@@ -406,6 +483,8 @@ function createEdgeResult(edgeId: string): EdgeRoutingValidationResult {
   return {
     edgeId,
     nodeHits: [],
+    dividerNodeHits: [],
+    endpointDividerInteriorHits: [],
     edgeCrossings: [],
     segmentOverlaps: [],
     illegalSegmentOverlaps: [],
@@ -486,7 +565,7 @@ function collectRouteNodeHits(path: RoutingPath, nodes: DiagramNode[]): RoutingN
   const hits: RoutingNodeHitRef[] = [];
   for (const segment of pathSegmentsWithRefs(path)) {
     for (const node of nodes) {
-      if (path.terminalIds.has(node.id) || !node.layout) {
+      if (!node.layout) {
         continue;
       }
       if (segmentIntersectsRectangle(segment.start, segment.end, node.layout)) {
@@ -498,6 +577,52 @@ function collectRouteNodeHits(path: RoutingPath, nodes: DiagramNode[]): RoutingN
     }
   }
   return hits;
+}
+
+function collectRouteObstacleHits(
+  path: RoutingPath,
+  nodes: DiagramNode[],
+  dividers: DiagramRoutingDivider[]
+): {
+  nodeHits: RoutingNodeHitRef[];
+  dividerNodeHits: RoutingNodeHitRef[];
+  endpointDividerInteriorHits: RoutingNodeHitRef[];
+} {
+  const nodeHits: RoutingNodeHitRef[] = [];
+  const dividerNodeHits: RoutingNodeHitRef[] = [];
+  const endpointDividerInteriorHits: RoutingNodeHitRef[] = [];
+  const dividerRectangles = dividers.map((divider) => requireLayoutRectangle(divider.id, divider.layout));
+
+  for (const segment of pathSegmentsWithRefs(path)) {
+    for (const node of nodes) {
+      if (!node.layout) {
+        continue;
+      }
+      if (segmentIntersectsRectangle(segment.start, segment.end, node.layout)) {
+        nodeHits.push({
+          nodeId: node.id,
+          segment: segment.ref
+        });
+      }
+    }
+
+    for (const divider of dividerRectangles) {
+      if (!segmentIntersectsRectangle(segment.start, segment.end, divider)) {
+        continue;
+      }
+      const hit = {
+        nodeId: divider.id,
+        segment: segment.ref
+      };
+      if (path.terminalDividerIds.has(divider.id)) {
+        endpointDividerInteriorHits.push(hit);
+      } else {
+        dividerNodeHits.push(hit);
+      }
+    }
+  }
+
+  return { nodeHits, dividerNodeHits, endpointDividerInteriorHits };
 }
 
 function pathSegmentsWithRefs(path: RoutingPath): Array<{ start: DiagramPoint; end: DiagramPoint; ref: RoutingSegmentRef }> {
