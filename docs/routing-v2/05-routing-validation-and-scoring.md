@@ -24,6 +24,20 @@ Soft score factors:
 
 Edge crossings stay soft for `hardValid`; they are reported for quality scoring and UI feedback.
 
+## Flexible Anchor Candidate Selection
+
+Ordinary routing-v2 edges choose route path and endpoint anchors together. The router builds a per-node port pool from displayed ordinary-edge degree: a node with degree `n` gets `n` slots on each north/east/south/west side, with slot ratios `i / (n + 1)`.
+
+Port reservations use stable slot identity, not floating-point ratios:
+
+```text
+nodeId:side:slotIndex
+```
+
+Direct and corridor candidates infer their source and target sides from the first and last segments of the geometry skeleton. Outer-left/right/top/bottom candidates use matching sides on both endpoints, and outer-corner candidates use the first outer lane side for the source and the final outer lane side for the target. Candidate expansion is budgeted per strategy so high-degree nodes do not create an unbounded port Cartesian product.
+
+Repair reroutes an edge transactionally: it evaluates replacements against reservations from all other committed routes, then commits the new path and ports only if the replacement improves the route. Rejected repairs leave the old path, anchors, and reserved ports intact.
+
 ## Segment Overlap Policy
 
 Displayed routed connectors must not share overlapping segments. Sharing a source or target does not make a shared segment legal.
@@ -33,7 +47,18 @@ Routing v2 reports both overlap counts:
 - `segmentOverlaps`: every geometric route segment overlap.
 - `illegalSegmentOverlaps`: compatibility alias for hard-failure segment overlaps.
 
-Dividers are still the only bundling mechanism, but the engine must materialize a single physical trunk plus spokes before final validation. Duplicated divider trunks, divider leaf overlaps, ordinary edge overlaps, invalid divider overlaps, and same-source/same-target overlaps are illegal.
+Dividers are still the only bundling mechanism, but the engine must materialize physical connectors before final validation. Duplicated divider trunks, divider spokes, ordinary edge overlaps, invalid divider overlaps, and same-source/same-target overlaps are illegal.
+
+## Divider Connector Graph
+
+A routing divider is a virtual node in the connector graph. The original semantic relationship remains the owner identity, but displayed geometry is stored in physical trunk/spoke `routedSegments`:
+
+- fan-out: one trunk from the common class to the divider, then one spoke from the divider to each remote class
+- fan-in: one spoke from each remote class to the divider, then one trunk from the divider to the common class
+
+Divider-owned semantic edges are not routed directly and do not rely on top-level direct source/target anchors. The trunk owner is a deterministic representative semantic edge; each spoke is owned by its corresponding semantic edge. Physical trunk/spoke paths are accepted as occupancy before ordinary semantic edges are routed, so normal routes avoid divider connector node hits and illegal segment overlaps.
+
+Divider side is a hard constraint. A trunk connects to `divider.side`; spokes connect to `oppositeSide(divider.side)` on the divider and to the class side facing the divider. Spokes are sorted by remote position along the divider axis and are scored to prefer monotonic movement from divider to remote for fan-out, or remote to divider for fan-in.
 
 ## Recovery Search
 

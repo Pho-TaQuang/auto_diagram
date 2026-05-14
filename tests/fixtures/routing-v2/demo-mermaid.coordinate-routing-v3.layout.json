@@ -1,0 +1,118 @@
+{
+  "version": 3,
+  "layoutMode": "coordinate-routing",
+  "groups": [
+    {
+      "id": "group_stereotype_AdapterFactory",
+      "label": "AdapterFactory",
+      "x": 1920,
+      "y": 80,
+      "packing": "vertical",
+      "nodeOrder": [
+        "DataAccessAdapterFactory"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_DataAccessAdapter",
+      "label": "DataAccessAdapter",
+      "x": 2800,
+      "y": 80,
+      "packing": "vertical",
+      "nodeOrder": [
+        "DataAccessAdapter"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_Controller",
+      "label": "Controller",
+      "x": 80,
+      "y": 1150,
+      "packing": "vertical",
+      "nodeOrder": [
+        "DmPhuongTienController"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_ManagerInterface",
+      "label": "ManagerInterface",
+      "x": 1000,
+      "y": 1150,
+      "packing": "vertical",
+      "nodeOrder": [
+        "IDmPhuongTienManager"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_Manager",
+      "label": "Manager",
+      "x": 1920,
+      "y": 1150,
+      "packing": "vertical",
+      "nodeOrder": [
+        "DmPhuongTienManager"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_LLBLGenEntity",
+      "label": "LLBLGenEntity",
+      "x": 3200,
+      "y": 620,
+      "packing": "vertical",
+      "nodeOrder": [
+        "SysdmPhuongTienEntity",
+        "SysdmLoaiLucLuongEntity"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_Model",
+      "label": "Model",
+      "x": 80,
+      "y": 2200,
+      "packing": "horizontal",
+      "nodeOrder": [
+        "DmPhuongTienModel",
+        "SysQlpaModel_LoaiLucLuongOptionModel"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    },
+    {
+      "id": "group_stereotype_DTO",
+      "label": "DTO",
+      "x": 1000,
+      "y": 2200,
+      "packing": "horizontal",
+      "nodeOrder": [
+        "PageModel",
+        "DmPhuongTienPageModel"
+      ],
+      "locked": true,
+      "packingLocked": true,
+      "nodeOrderLocked": true
+    }
+  ],
+  "routing": {
+    "dividerThreshold": 4,
+    "outerLaneMargin": 220,
+    "maxRepairPasses": 2
+  }
+}

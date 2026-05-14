@@ -14,7 +14,12 @@ import {
   type LayoutEngineOptions
 } from "./index.js";
 import type { LayoutRunContext } from "./engine/LayoutEngine.js";
-import type { DiagramDocument, DiagramEdgeAnchor } from "../../core/src/index.js";
+import type {
+  DiagramDocument,
+  DiagramEdgeAnchor,
+  DiagramRoutingDivider,
+  DiagramRoutedEdgeSegment
+} from "../../core/src/index.js";
 
 export function runRoutingV2Tests(): void {
   runRoutingV2Slice1Tests();
@@ -83,6 +88,7 @@ export function runRoutingV2Slice5ATests(): void {
 
 export function runRoutingV2Slice5BTests(): void {
   generatedDemoFixtureReachesStrictGoldenRoutingTarget();
+  lockedDemoFixtureReachesStrictGoldenRoutingTarget();
   renamedGeneratedDemoTopologyAlsoReachesStrictGoldenRoutingTarget();
 }
 
@@ -381,6 +387,9 @@ function fanOutMoreThanFourUsesDivider(): void {
   assert.equal(result.document.routingDividers?.length, 1);
   assert.equal(result.document.routingDividers?.[0]?.mode, "fanOut");
   assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), true);
+  assertDividerConnectorGraph(result.document);
+  assert.equal(result.report.routingSummary?.edgeNodeHits, 0);
+  assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
 }
 
 function fanInMoreThanFourUsesDivider(): void {
@@ -389,6 +398,9 @@ function fanInMoreThanFourUsesDivider(): void {
   assert.equal(result.document.routingDividers?.length, 1);
   assert.equal(result.document.routingDividers?.[0]?.mode, "fanIn");
   assert.equal(result.report.trace?.some((event) => event.type === "divider-created"), true);
+  assertDividerConnectorGraph(result.document);
+  assert.equal(result.report.routingSummary?.edgeNodeHits, 0);
+  assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
 }
 
 function fanOutAtOrBelowThresholdDoesNotUseDividerOrShareSegments(): void {
@@ -513,6 +525,160 @@ function dividerPhysicalSegmentsAreOrdered(): void {
   assert.ok(firstDividerEdge);
   assert.ok(routedSegments.length > 1);
   assert.ok(routedSegments[0].id.endsWith(":divider-trunk"));
+  assert.ok(routedSegments.some((segment) => segment.id.endsWith(":divider-spoke")));
+}
+
+function assertDividerConnectorGraph(document: DiagramDocument): void {
+  const dividers = document.routingDividers ?? [];
+  const edgeById = new Map(document.edges.map((edge) => [edge.id, edge]));
+
+  for (const divider of dividers) {
+    const ownerEdges = divider.sourceEdgeIds.map((edgeId) => {
+      const edge = edgeById.get(edgeId);
+      assert.ok(edge, `Expected divider owner edge ${edgeId} to exist.`);
+      return edge;
+    });
+    const ownerSegments = ownerEdges.flatMap((edge) => edge.layout?.routedSegments ?? []);
+    const trunks = ownerSegments.filter((segment) => segment.id.endsWith(":divider-trunk"));
+    const spokes = ownerSegments.filter((segment) => segment.id.endsWith(":divider-spoke"));
+
+    assert.equal(trunks.length, 1, `Expected divider ${divider.id} to have one physical trunk.`);
+    assert.equal(spokes.length, divider.sourceEdgeIds.length, `Expected divider ${divider.id} to have one physical spoke per semantic edge.`);
+
+    for (const edge of ownerEdges) {
+      assert.ok((edge.layout?.routedSegments ?? []).some((segment) => segment.id.endsWith(":divider-spoke")));
+      assert.equal(edge.layout?.sourceAnchor, undefined);
+      assert.equal(edge.layout?.targetAnchor, undefined);
+      assert.equal((edge.layout?.waypoints ?? []).length, 0);
+    }
+
+    assertDividerTrunkConstraints(divider, trunks[0]);
+    for (const spoke of spokes) {
+      assertDividerSpokeConstraints(document, divider, spoke);
+    }
+  }
+}
+
+function assertDividerTrunkConstraints(divider: DiagramRoutingDivider, trunk: DiagramRoutedEdgeSegment): void {
+  if (divider.mode === "fanOut") {
+    assert.equal(trunk.targetId, divider.id);
+    assert.equal(trunk.targetAnchor?.side, divider.side);
+    return;
+  }
+
+  assert.equal(trunk.sourceId, divider.id);
+  assert.equal(trunk.sourceAnchor?.side, divider.side);
+}
+
+function assertDividerSpokeConstraints(
+  document: DiagramDocument,
+  divider: DiagramRoutingDivider,
+  spoke: DiagramRoutedEdgeSegment
+): void {
+  if (divider.mode === "fanOut") {
+    assert.equal(spoke.sourceId, divider.id);
+    assert.equal(spoke.sourceAnchor?.side, oppositeSide(divider.side));
+    assert.equal(spoke.targetAnchor?.side, divider.side);
+    assertMonotonicSegmentPath(document, divider, spoke, fanOutSpokeDirection(divider.side));
+    return;
+  }
+
+  assert.equal(spoke.targetId, divider.id);
+  assert.equal(spoke.sourceAnchor?.side, divider.side);
+  assert.equal(spoke.targetAnchor?.side, oppositeSide(divider.side));
+  assertMonotonicSegmentPath(document, divider, spoke, fanInSpokeDirection(divider.side));
+}
+
+function assertMonotonicSegmentPath(
+  document: DiagramDocument,
+  divider: DiagramRoutingDivider,
+  segment: DiagramRoutedEdgeSegment,
+  direction: "up" | "down" | "left" | "right"
+): void {
+  const points = routedSegmentPoints(document, divider, segment);
+  for (const [start, end] of pathSegments(points)) {
+    if (direction === "down") {
+      assert.ok(end.y + 0.001 >= start.y, `${segment.id} should not move upward.`);
+    } else if (direction === "up") {
+      assert.ok(end.y <= start.y + 0.001, `${segment.id} should not move downward.`);
+    } else if (direction === "right") {
+      assert.ok(end.x + 0.001 >= start.x, `${segment.id} should not move left.`);
+    } else {
+      assert.ok(end.x <= start.x + 0.001, `${segment.id} should not move right.`);
+    }
+  }
+}
+
+function routedSegmentPoints(
+  document: DiagramDocument,
+  divider: DiagramRoutingDivider,
+  segment: DiagramRoutedEdgeSegment
+): Array<{ x: number; y: number }> {
+  assert.ok(segment.sourceAnchor);
+  assert.ok(segment.targetAnchor);
+  const source = endpointRectangle(document, divider, segment.sourceId);
+  const target = endpointRectangle(document, divider, segment.targetId);
+  return [
+    anchorPoint(source, segment.sourceAnchor),
+    ...segment.waypoints,
+    anchorPoint(target, segment.targetAnchor)
+  ];
+}
+
+function endpointRectangle(
+  document: DiagramDocument,
+  divider: DiagramRoutingDivider,
+  id: string
+): { x: number; y: number; width: number; height: number } {
+  if (id === divider.id) {
+    return divider.layout;
+  }
+  const node = document.nodes.find((candidate) => candidate.id === id);
+  assert.ok(node?.layout, `Expected endpoint ${id} to have layout.`);
+  return node.layout;
+}
+
+function pathSegments(points: Array<{ x: number; y: number }>): Array<[{ x: number; y: number }, { x: number; y: number }]> {
+  return points.slice(1).map((point, index) => [points[index], point]);
+}
+
+function oppositeSide(side: DiagramEdgeAnchor["side"]): DiagramEdgeAnchor["side"] {
+  if (side === "north") {
+    return "south";
+  }
+  if (side === "south") {
+    return "north";
+  }
+  if (side === "west") {
+    return "east";
+  }
+  return "west";
+}
+
+function fanOutSpokeDirection(side: DiagramEdgeAnchor["side"]): "up" | "down" | "left" | "right" {
+  if (side === "north") {
+    return "down";
+  }
+  if (side === "south") {
+    return "up";
+  }
+  if (side === "west") {
+    return "right";
+  }
+  return "left";
+}
+
+function fanInSpokeDirection(side: DiagramEdgeAnchor["side"]): "up" | "down" | "left" | "right" {
+  if (side === "north") {
+    return "up";
+  }
+  if (side === "south") {
+    return "down";
+  }
+  if (side === "west") {
+    return "left";
+  }
+  return "right";
 }
 
 function nodeHitIsHardFailure(): void {
@@ -613,6 +779,19 @@ function generatedDemoFixtureReachesStrictGoldenRoutingTarget(): void {
   assert.ok(result.report.trace?.some((event) => event.type === "route-order-selected"));
 }
 
+function lockedDemoFixtureReachesStrictGoldenRoutingTarget(): void {
+  const parsed = parseMermaidClassDiagram(readFileSync("docs/demo_mermaid.md", "utf8"));
+  const layout = readJsonFixture("demo-mermaid.coordinate-routing-v3.layout.json") as CoordinateRoutingLayoutV3;
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+
+  assertStrictGoldenRoutingTarget(result);
+}
+
 function renamedGeneratedDemoTopologyAlsoReachesStrictGoldenRoutingTarget(): void {
   const parsed = parseMermaidClassDiagram(renamedDemoMermaid());
   const result = createDefaultLayoutEngineRegistry().get("suggest-initial-v2").run({
@@ -629,11 +808,46 @@ function assertStrictGoldenRoutingTarget(result: LayoutEngineResult): void {
   assert.ok(summary);
   assert.equal(summary.hardValid, true);
   assert.equal(summary.edgeNodeHits, 0);
+  assert.equal(summary.dividerNodeHits, 0);
+  assert.equal(summary.endpointDividerInteriorHits, 0);
   assert.equal(summary.illegalSegmentOverlaps, 0);
+  assert.equal(summary.edgeCrossings, 0);
   assert.equal(summary.routingFailures, 0);
-  assert.equal(result.report.edgeValidations?.some((edge) => edge.routingFallbackUsed), false);
+  assert.equal(result.report.edgeValidations?.some((edge) => edge.routingFallbackUsed || edge.routingFailed), false);
   assert.equal(summary.invalidDividers, 0);
   assert.equal(summary.edgeIdentityViolations, 0);
+  assertOrdinaryPortsAreUnique(result.document);
+}
+
+function assertOrdinaryPortsAreUnique(document: DiagramDocument): void {
+  const dividerEdgeIds = new Set((document.routingDividers ?? []).flatMap((divider) => divider.sourceEdgeIds));
+  const ordinaryEdges = document.edges.filter((edge) => !dividerEdgeIds.has(edge.id));
+  const degreeByNodeId = new Map<string, number>();
+  const seen = new Set<string>();
+
+  for (const edge of ordinaryEdges) {
+    degreeByNodeId.set(edge.sourceId, (degreeByNodeId.get(edge.sourceId) ?? 0) + 1);
+    degreeByNodeId.set(edge.targetId, (degreeByNodeId.get(edge.targetId) ?? 0) + 1);
+  }
+
+  for (const edge of ordinaryEdges) {
+    for (const endpoint of ["source", "target"] as const) {
+      const nodeId = endpoint === "source" ? edge.sourceId : edge.targetId;
+      const anchor = endpoint === "source" ? edge.layout?.sourceAnchor : edge.layout?.targetAnchor;
+      const degree = degreeByNodeId.get(nodeId) ?? 0;
+      assert.ok(anchor, `Expected ${edge.id} ${endpoint} anchor.`);
+      assert.ok(degree > 0, `Expected displayed degree for ${nodeId}.`);
+      const slotIndex = Math.round(anchor.ratio * (degree + 1) - 1);
+      const expectedRatio = Number(((slotIndex + 1) / (degree + 1)).toFixed(3));
+
+      assert.ok(slotIndex >= 0 && slotIndex < degree, `Expected ${edge.id} ${endpoint} to use a valid slot index.`);
+      assert.ok(Math.abs(anchor.ratio - expectedRatio) < 0.001, `Expected ${edge.id} ${endpoint} to use an even port slot.`);
+
+      const key = `${nodeId}:${anchor.side}:${slotIndex}`;
+      assert.equal(seen.has(key), false, `Expected ordinary routes not to share port slot ${key}.`);
+      seen.add(key);
+    }
+  }
 }
 
 function renamedDemoMermaid(): string {

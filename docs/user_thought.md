@@ -1286,7 +1286,7 @@ Decision:
 - Divider-owned physical routes and ordinary routes participate in occupancy so later routes avoid divider hits, segment overlap, and crossings.
 - Local repair reroutes dirty edges after the first pass.
 - routing-fallback-used is emitted only after recovery and repair fail.
-- The DmPhuongTien generated v2 target is hardValid=true with edgeNodeHits=0, dividerNodeHits=0, endpointDividerInteriorHits=0, illegalSegmentOverlaps=0, routingFailures=0, routingFallbackUsed=0, invalidDividers=0, and edgeIdentityViolations=0. Edge crossings remain soft warnings.
+- The DmPhuongTien generated v2 target is hardValid=true with edgeNodeHits=0, dividerNodeHits=0, endpointDividerInteriorHits=0, illegalSegmentOverlaps=0, edgeCrossings=0, routingFailures=0, routingFallbackUsed=0, invalidDividers=0, and edgeIdentityViolations=0. Edge crossings remain soft globally, but this fixture is a zero-crossing golden target.
 ```
 
 ---
@@ -1304,4 +1304,39 @@ Decision:
 - For large diagrams, the Python utility uses deterministic adaptive guards: generated-layout optimization is skipped above a bounded edge count, and sparse lane-graph recovery is kept to small diagrams.
 - The adaptive guards must emit diagnostics/report data instead of silently pretending that full optimization was attempted.
 - Generated .drawio output can still be written when hard validation fails, as long as the report identifies the failed constraints.
+```
+
+---
+
+## 40. Routing V2 Flexible Anchor Candidate Selection Decision
+
+Decision:
+
+```text
+- Ordinary routing-v2 edges choose route path and source/target anchors together.
+- A node with displayed ordinary-edge degree n receives n candidate slots on each north/east/south/west side.
+- Slot ratios are i/(n+1), but reservation identity is nodeId:side:slotIndex, not a floating-point ratio.
+- Direct/corridor side constraints come from the first and last segments of the route skeleton.
+- Outer-left/right/top/bottom use the matching side on both endpoints.
+- Outer-corner uses the first lane side for the source and final lane side for the target.
+- Candidate expansion is budgeted per strategy to avoid high-degree endpoint Cartesian explosion.
+- Repair evaluates a candidate with the current edge removed from occupancy and reservations, then commits both route and ports only if the candidate improves. Rejected repairs restore the old route and reserved ports by leaving committed state unchanged.
+```
+
+---
+
+## 41. Routing V2 Divider Connector Graph Decision
+
+Decision:
+
+```text
+- A routing divider is a virtual node in the connector graph, not a route decoration.
+- Semantic edges that belong to a divider are owner identities only; displayed geometry is stored in engine-owned physical routedSegments.
+- Fan-out materializes one common-class -> divider trunk and one divider -> remote-class spoke per semantic edge.
+- Fan-in materializes one remote-class -> divider spoke per semantic edge and one divider -> common-class trunk.
+- Divider planning runs before anchor assignment. Semantic divider edges are not routed directly and do not receive top-level direct source/target anchors.
+- Divider side is a hard constraint for trunk/spoke anchors. Spokes use the divider side opposite the trunk side and the remote class side facing the divider.
+- Spokes are ordered by remote position along the divider axis and prefer monotonic movement: top/bottom dividers by Y direction, left/right dividers by X direction.
+- Physical trunk/spoke paths are committed to occupancy before ordinary semantic edges route, so normal routes avoid divider connector node hits and illegal shared segments.
+- Divider scoring treats node hits, divider interior hits, wrong side, and illegal segment overlap as near-hard failures; non-monotonic spokes and trunk/spoke crossings are much more expensive than bend or length.
 ```
