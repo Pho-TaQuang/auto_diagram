@@ -278,29 +278,80 @@ function generatedRoutingIntentCandidates(document: DiagramDocument, intent: Nor
   const candidates: GeneratedIntentCandidate[] = [
     { name: "normalized", intent }
   ];
-  const variants: Array<{ xGap: number; yGap: number; packing: "original" | "vertical" }> = [
-    { xGap: 440, yGap: 640, packing: "vertical" },
-    { xGap: 440, yGap: 960, packing: "vertical" },
-    { xGap: 700, yGap: 960, packing: "vertical" },
-    { xGap: 700, yGap: 640, packing: "vertical" },
-    { xGap: 440, yGap: 960, packing: "original" }
+  const variants: Array<{ padding: number; packing: "original" | "vertical" }> = [
+    { padding: 80, packing: "vertical" },
+    { padding: 120, packing: "vertical" },
+    { padding: 160, packing: "vertical" },
+    { padding: 120, packing: "original" }
   ];
 
   for (const variant of variants) {
     candidates.push({
-      name: `layered-${variant.packing}-x${variant.xGap}-y${variant.yGap}`,
-      intent: createLayeredGeneratedIntent(document, intent, variant.xGap, variant.yGap, variant.packing)
+      name: `greedy-${variant.packing}-pad${variant.padding}`,
+      intent: createGreedyPackedIntent(document, intent, variant.padding, variant.packing)
     });
   }
 
   return candidates;
 }
 
-function createLayeredGeneratedIntent(
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function checkOverlap(rect1: Rect, rect2: Rect, padding: number): boolean {
+  return !(
+    rect1.x + rect1.width + padding <= rect2.x ||
+    rect1.x >= rect2.x + rect2.width + padding ||
+    rect1.y + rect1.height + padding <= rect2.y ||
+    rect1.y >= rect2.y + rect2.height + padding
+  );
+}
+
+function spiralSearch(
+  startX: number,
+  startY: number,
+  width: number,
+  height: number,
+  placedGroups: Rect[],
+  padding: number
+): { x: number; y: number } {
+  const step = 40;
+  let angle = 0;
+  let radius = 0;
+  
+  for (let i = 0; i < 10000; i++) {
+    const x = Math.round(startX + radius * Math.cos(angle));
+    const y = Math.round(startY + radius * Math.sin(angle));
+    
+    const candidate: Rect = { x, y, width, height };
+    
+    let hasOverlap = false;
+    for (const placed of placedGroups) {
+      if (checkOverlap(candidate, placed, padding)) {
+        hasOverlap = true;
+        break;
+      }
+    }
+    
+    if (!hasOverlap) {
+      return { x, y };
+    }
+    
+    angle += 0.5;
+    radius += step * 0.1;
+  }
+  
+  return { x: startX, y: startY };
+}
+
+function createGreedyPackedIntent(
   document: DiagramDocument,
   intent: NormalizedCoordinateRoutingIntent,
-  xGap: number,
-  yGap: number,
+  padding: number,
   packingMode: "original" | "vertical"
 ): NormalizedCoordinateRoutingIntent {
   const groupByNodeId = new Map<string, string>();
@@ -308,139 +359,103 @@ function createLayeredGeneratedIntent(
     const group = intent.groups[groupId];
     group?.nodeOrder.forEach((nodeId) => groupByNodeId.set(nodeId, groupId));
   }
-  const layers = computeGroupLayers(document, intent, groupByNodeId);
-  const groupsByLayer = new Map<number, string[]>();
-  for (const groupId of intent.groupOrder) {
-    const layer = layers.get(groupId) ?? 0;
-    groupsByLayer.set(layer, [...(groupsByLayer.get(layer) ?? []), groupId]);
-  }
-  for (const [layer, groupIds] of groupsByLayer) {
-    groupsByLayer.set(layer, orderLayerGroupIds(groupIds, document, groupByNodeId, intent));
-  }
 
-  const nextGroups = new Map<string, NormalizedGroupIntent>();
   const sizes = new Map<string, { width: number; height: number }>();
+  const nextGroups = new Map<string, NormalizedGroupIntent>();
   for (const groupId of intent.groupOrder) {
     const group = intent.groups[groupId];
-    if (!group) {
-      continue;
-    }
+    if (!group) continue;
     const packing = packingMode === "vertical" ? "vertical" : group.packing;
     sizes.set(groupId, measureGeneratedGroup(document, group, packing));
     nextGroups.set(groupId, { ...group, packing });
   }
 
-  const layerIds = [...groupsByLayer.keys()].sort((left, right) => left - right);
-  const layerX = new Map<number, number>();
-  let x = 0;
-  for (const layer of layerIds) {
-    layerX.set(layer, x);
-    const maxWidth = Math.max(...(groupsByLayer.get(layer) ?? []).map((groupId) => sizes.get(groupId)?.width ?? 0), 0);
-    x += maxWidth + xGap;
+  const degrees = new Map<string, number>();
+  for (const groupId of intent.groupOrder) {
+    degrees.set(groupId, 0);
+  }
+  for (const edge of document.edges) {
+    const sourceGroup = groupByNodeId.get(edge.sourceId);
+    const targetGroup = groupByNodeId.get(edge.targetId);
+    if (sourceGroup && targetGroup && sourceGroup !== targetGroup) {
+      degrees.set(sourceGroup, (degrees.get(sourceGroup) ?? 0) + 1);
+      degrees.set(targetGroup, (degrees.get(targetGroup) ?? 0) + 1);
+    }
   }
 
-  const layerBounds = new Map<number, { top: number; bottom: number; center: number }>();
-  for (const layer of layerIds) {
-    let y = 0;
-    for (const groupId of groupsByLayer.get(layer) ?? []) {
-      const group = nextGroups.get(groupId);
-      const size = sizes.get(groupId);
-      if (!group || !size) {
-        continue;
-      }
-      nextGroups.set(groupId, { ...group, x: layerX.get(layer) ?? 0, y });
-      y += size.height + yGap;
-    }
-    const bottom = Math.max(0, y - yGap);
-    layerBounds.set(layer, { top: 0, bottom, center: bottom / 2 });
-  }
-  const globalCenter = Math.max(...[...layerBounds.values()].map((bounds) => bounds.center), 0);
+  const sortedGroupIds = [...intent.groupOrder].sort((a, b) => {
+    const diff = (degrees.get(b) ?? 0) - (degrees.get(a) ?? 0);
+    if (diff !== 0) return diff;
+    return a.localeCompare(b);
+  });
 
-  for (const layer of layerIds) {
-    const groupIds = groupsByLayer.get(layer) ?? [];
-    if (groupIds.length !== 1) {
-      continue;
-    }
-    const groupId = groupIds[0];
-    const group = nextGroups.get(groupId);
+  const placedGroups: Rect[] = [];
+  const placedGroupMap = new Map<string, Rect>();
+
+  for (const groupId of sortedGroupIds) {
     const size = sizes.get(groupId);
-    if (!group || !size) {
-      continue;
+    if (!size) continue;
+
+    const neighbors = document.edges
+      .map((edge) => {
+        if (groupByNodeId.get(edge.sourceId) === groupId) return groupByNodeId.get(edge.targetId);
+        if (groupByNodeId.get(edge.targetId) === groupId) return groupByNodeId.get(edge.sourceId);
+        return undefined;
+      })
+      .filter((n): n is string => n !== undefined && n !== groupId);
+
+    let placedNeighborCount = 0;
+    let sumX = 0;
+    let sumY = 0;
+
+    for (const neighborId of neighbors) {
+      const placed = placedGroupMap.get(neighborId);
+      if (placed) {
+        sumX += placed.x + placed.width / 2;
+        sumY += placed.y + placed.height / 2;
+        placedNeighborCount++;
+      }
     }
-    const incomingSourceY = singleIncomingSourceY(groupId, document, groupByNodeId, nextGroups);
-    const hasOutgoing = document.edges.some((edge) => groupByNodeId.get(edge.sourceId) === groupId && groupByNodeId.get(edge.targetId) !== groupId);
-    const y = incomingSourceY !== undefined && !hasOutgoing
-      ? incomingSourceY
-      : Math.max(0, globalCenter - size.height / 2);
-    nextGroups.set(groupId, { ...group, y });
+
+    let idealX = 0;
+    let idealY = 0;
+    if (placedNeighborCount > 0) {
+      idealX = sumX / placedNeighborCount - size.width / 2;
+      idealY = sumY / placedNeighborCount - size.height / 2;
+    }
+
+    const position = spiralSearch(idealX, idealY, size.width, size.height, placedGroups, padding);
+    
+    const rect: Rect = { x: position.x, y: position.y, width: size.width, height: size.height };
+    placedGroups.push(rect);
+    placedGroupMap.set(groupId, rect);
+    
+    const group = nextGroups.get(groupId);
+    if (group) {
+      nextGroups.set(groupId, { ...group, x: position.x, y: position.y });
+    }
+  }
+
+  let minX = Number.MAX_SAFE_INTEGER;
+  let minY = Number.MAX_SAFE_INTEGER;
+  for (const rect of placedGroups) {
+    if (rect.x < minX) minX = rect.x;
+    if (rect.y < minY) minY = rect.y;
+  }
+  if (minX === Number.MAX_SAFE_INTEGER) minX = 0;
+  if (minY === Number.MAX_SAFE_INTEGER) minY = 0;
+
+  for (const groupId of intent.groupOrder) {
+    const group = nextGroups.get(groupId);
+    if (group) {
+      nextGroups.set(groupId, { ...group, x: group.x - minX, y: group.y - minY });
+    }
   }
 
   return {
     ...intent,
     groups: Object.fromEntries(intent.groupOrder.map((groupId) => [groupId, nextGroups.get(groupId) ?? intent.groups[groupId]]))
   };
-}
-
-function computeGroupLayers(
-  document: DiagramDocument,
-  intent: NormalizedCoordinateRoutingIntent,
-  groupByNodeId: Map<string, string>
-): Map<string, number> {
-  const layers = new Map(intent.groupOrder.map((groupId) => [groupId, 0]));
-  for (let pass = 0; pass < intent.groupOrder.length; pass += 1) {
-    let changed = false;
-    for (const edge of document.edges) {
-      const sourceGroupId = groupByNodeId.get(edge.sourceId);
-      const targetGroupId = groupByNodeId.get(edge.targetId);
-      if (!sourceGroupId || !targetGroupId || sourceGroupId === targetGroupId) {
-        continue;
-      }
-      const nextLayer = Math.min(intent.groupOrder.length - 1, (layers.get(sourceGroupId) ?? 0) + 1);
-      if (nextLayer > (layers.get(targetGroupId) ?? 0)) {
-        layers.set(targetGroupId, nextLayer);
-        changed = true;
-      }
-    }
-    if (!changed) {
-      break;
-    }
-  }
-  return layers;
-}
-
-function orderLayerGroupIds(
-  groupIds: string[],
-  document: DiagramDocument,
-  groupByNodeId: Map<string, string>,
-  intent: NormalizedCoordinateRoutingIntent
-): string[] {
-  return [...groupIds].sort((left, right) =>
-    firstEdgeIndexForGroup(left, document, groupByNodeId) - firstEdgeIndexForGroup(right, document, groupByNodeId) ||
-    intent.groupOrder.indexOf(left) - intent.groupOrder.indexOf(right) ||
-    left.localeCompare(right)
-  );
-}
-
-function firstEdgeIndexForGroup(groupId: string, document: DiagramDocument, groupByNodeId: Map<string, string>): number {
-  const index = document.edges.findIndex((edge) => groupByNodeId.get(edge.sourceId) === groupId || groupByNodeId.get(edge.targetId) === groupId);
-  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-}
-
-function singleIncomingSourceY(
-  groupId: string,
-  document: DiagramDocument,
-  groupByNodeId: Map<string, string>,
-  groups: Map<string, NormalizedGroupIntent>
-): number | undefined {
-  const incoming = document.edges
-    .map((edge) => ({ sourceGroupId: groupByNodeId.get(edge.sourceId), targetGroupId: groupByNodeId.get(edge.targetId) }))
-    .filter((edge) => edge.targetGroupId === groupId && edge.sourceGroupId && edge.sourceGroupId !== groupId)
-    .map((edge) => groups.get(edge.sourceGroupId!))
-    .filter((group): group is NormalizedGroupIntent => Boolean(group));
-  if (incoming.length === 0) {
-    return undefined;
-  }
-  return incoming.reduce((sum, group) => sum + group.y, 0) / incoming.length;
 }
 
 function measureGeneratedGroup(document: DiagramDocument, groupIntent: NormalizedGroupIntent, packing: "vertical" | "horizontal"): { width: number; height: number } {
