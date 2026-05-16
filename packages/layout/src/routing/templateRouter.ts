@@ -10,6 +10,7 @@ import type {
   DiagramRoutedEdgeSegmentStrategy,
   DiagramRoutingDivider
 } from "../../../core/src/index.js";
+import { OrthogonalRoutingIndex } from "./routingIndex.js";
 import type { RouteRequest, RouteStrategy } from "./RouteStrategy.js";
 
 const anchorStubDistance = 24;
@@ -3034,6 +3035,21 @@ function pointInsideBlockedNode(edge: DiagramEdge, point: DiagramPoint, nodes: D
   });
 }
 
+const indexCache = new WeakMap<AcceptedPath[], { length: number; index: OrthogonalRoutingIndex }>();
+
+function getRoutingIndex(acceptedPaths: AcceptedPath[]): OrthogonalRoutingIndex {
+  let cached = indexCache.get(acceptedPaths);
+  if (!cached || cached.length !== acceptedPaths.length) {
+    const index = new OrthogonalRoutingIndex();
+    for (const path of acceptedPaths) {
+      index.addPath(path.points);
+    }
+    indexCache.set(acceptedPaths, { length: acceptedPaths.length, index });
+    return index;
+  }
+  return cached.index;
+}
+
 function laneSegmentBlocked(edge: DiagramEdge, start: DiagramPoint, end: DiagramPoint, nodes: DiagramNode[], acceptedPaths: AcceptedPath[]): boolean {
   if (pointsEqual(start, end)) {
     return true;
@@ -3048,34 +3064,11 @@ function laneSegmentBlocked(edge: DiagramEdge, start: DiagramPoint, end: Diagram
     }
   }
 
-  for (const accepted of acceptedPaths) {
-    for (const [acceptedStart, acceptedEnd] of pathSegments(accepted.points)) {
-      if (segmentsOverlap(start, end, acceptedStart, acceptedEnd)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  return getRoutingIndex(acceptedPaths).countIllegalSegmentOverlaps([start, end]) > 0;
 }
 
 function segmentCrossingsWithAccepted(start: DiagramPoint, end: DiagramPoint, acceptedPaths: AcceptedPath[]): number {
-  let crossings = 0;
-  for (const accepted of acceptedPaths) {
-    for (const [acceptedStart, acceptedEnd] of pathSegments(accepted.points)) {
-      if (
-        !segmentsOverlap(start, end, acceptedStart, acceptedEnd) &&
-        segmentsIntersect(start, end, acceptedStart, acceptedEnd) &&
-        !pointsEqual(start, acceptedStart) &&
-        !pointsEqual(start, acceptedEnd) &&
-        !pointsEqual(end, acceptedStart) &&
-        !pointsEqual(end, acceptedEnd)
-      ) {
-        crossings += 1;
-      }
-    }
-  }
-  return crossings;
+  return getRoutingIndex(acceptedPaths).countCrossingsWithAccepted([start, end]);
 }
 
 function countEdgeNodeHits(edge: DiagramEdge, points: DiagramPoint[], nodes: DiagramNode[]): number {
@@ -3097,44 +3090,11 @@ function countEdgeNodeHits(edge: DiagramEdge, points: DiagramPoint[], nodes: Dia
 }
 
 function countIllegalSegmentOverlaps(edge: DiagramEdge, points: DiagramPoint[], acceptedPaths: AcceptedPath[]): number {
-  let overlaps = 0;
-  const segments = pathSegments(points);
-
-  for (const accepted of acceptedPaths) {
-    for (const [start, end] of segments) {
-      for (const [acceptedStart, acceptedEnd] of pathSegments(accepted.points)) {
-        if (segmentsOverlap(start, end, acceptedStart, acceptedEnd)) {
-          overlaps += 1;
-        }
-      }
-    }
-  }
-
-  return overlaps;
+  return getRoutingIndex(acceptedPaths).countIllegalSegmentOverlaps(points);
 }
 
 function countCrossingsWithAccepted(points: DiagramPoint[], acceptedPaths: AcceptedPath[]): number {
-  let crossings = 0;
-  const segments = pathSegments(points);
-
-  for (const accepted of acceptedPaths) {
-    for (const [start, end] of segments) {
-      for (const [acceptedStart, acceptedEnd] of pathSegments(accepted.points)) {
-        if (
-          !segmentsOverlap(start, end, acceptedStart, acceptedEnd) &&
-          segmentsIntersect(start, end, acceptedStart, acceptedEnd) &&
-          !pointsEqual(start, acceptedStart) &&
-          !pointsEqual(start, acceptedEnd) &&
-          !pointsEqual(end, acceptedStart) &&
-          !pointsEqual(end, acceptedEnd)
-        ) {
-          crossings += 1;
-        }
-      }
-    }
-  }
-
-  return crossings;
+  return getRoutingIndex(acceptedPaths).countCrossingsWithAccepted(points);
 }
 
 function requireNodeRectangle(node: DiagramNode): Rectangle {

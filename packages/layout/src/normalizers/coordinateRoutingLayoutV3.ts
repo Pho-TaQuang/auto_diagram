@@ -6,6 +6,7 @@ import type {
 } from "../../../core/src/index.js";
 import type { LayoutRunContext } from "../engine/LayoutEngine.js";
 import type { LayoutLogEvent, LayoutSourceFormat } from "../engine/LayoutRunReport.js";
+import { estimateClassNodeLayout } from "../mvp0GridLayout.js";
 import {
   relativeFlowLayoutToStereotypeLayoutIntent,
   type RelativeFlowLayout
@@ -30,8 +31,11 @@ export type CoordinateRoutingLayoutGroupV3 = {
   label: string;
   x: number;
   y: number;
+  width?: number;
+  height?: number;
   packing: DiagramGroupPackingV2;
   nodeOrder: string[];
+  nodes?: Record<string, { width: number; height: number }>;
   locked?: boolean;
   packingLocked?: boolean;
   nodeOrderLocked?: boolean;
@@ -141,7 +145,7 @@ export function createInitialCoordinateRoutingLayoutV3(
   placement: "grid" | "suggested" = "suggested"
 ): CoordinateRoutingLayoutV3 {
   const intent = createStereotypeLayoutIntent(document, { placement });
-  return stereotypeGridIntentToCoordinateRouting(intent);
+  return stereotypeGridIntentToCoordinateRouting(intent, document);
 }
 
 export function normalizeCoordinateRoutingIntent(
@@ -180,7 +184,7 @@ function convertStereotypeGridToCoordinateRouting(
     }
   }
 
-  const coordinate = stereotypeGridIntentToCoordinateRouting(intent);
+  const coordinate = stereotypeGridIntentToCoordinateRouting(intent, document);
   const normalized = normalizeCoordinateRoutingLayoutInput(coordinate, document, context, sourceFormat, existingWarnings);
   return {
     ...normalized,
@@ -188,19 +192,74 @@ function convertStereotypeGridToCoordinateRouting(
   };
 }
 
-function stereotypeGridIntentToCoordinateRouting(intent: StereotypeLayoutIntent): CoordinateRoutingLayoutV3 {
+function stereotypeGridIntentToCoordinateRouting(
+  intent: StereotypeLayoutIntent,
+  document?: DiagramDocument
+): CoordinateRoutingLayoutV3 {
+  const nodeDimensions = new Map<string, { width: number; height: number }>();
+  if (document) {
+    for (const node of document.nodes) {
+      const layout = estimateClassNodeLayout(node);
+      nodeDimensions.set(node.id, { width: layout.width, height: layout.height });
+    }
+  }
+
   return {
     version: 3,
     layoutMode: "coordinate-routing",
-    groups: intent.groups.map((group): CoordinateRoutingLayoutGroupV3 => ({
-      id: group.id,
-      label: group.label,
-      x: group.gridX * defaultCellWidth,
-      y: group.gridY * defaultCellHeight,
-      packing: normalizePackingValue(group.packing),
-      nodeOrder: [...group.nodeIds],
-      locked: true
-    }))
+    groups: intent.groups.map((group): CoordinateRoutingLayoutGroupV3 => {
+      let width: number | undefined;
+      let height: number | undefined;
+      const nodesDict: Record<string, { width: number; height: number }> = {};
+      const packing = normalizePackingValue(group.packing);
+
+      if (document) {
+        let maxWidth = 0;
+        let maxHeight = 0;
+        let sumWidth = 0;
+        let sumHeight = 0;
+        let validNodeCount = 0;
+
+        for (const nodeId of group.nodeIds) {
+          const dim = nodeDimensions.get(nodeId);
+          if (dim) {
+            nodesDict[nodeId] = dim;
+            maxWidth = Math.max(maxWidth, dim.width);
+            maxHeight = Math.max(maxHeight, dim.height);
+            sumWidth += dim.width;
+            sumHeight += dim.height;
+            validNodeCount += 1;
+          }
+        }
+
+        const groupPadding = 32;
+        if (validNodeCount === 0) {
+          width = groupPadding * 2;
+          height = groupPadding * 2;
+        } else if (packing === "horizontal") {
+          const nodeGapX = 80;
+          width = sumWidth + nodeGapX * (validNodeCount - 1) + groupPadding * 2;
+          height = maxHeight + groupPadding * 2;
+        } else {
+          const nodeGapY = 80;
+          width = maxWidth + groupPadding * 2;
+          height = sumHeight + nodeGapY * (validNodeCount - 1) + groupPadding * 2;
+        }
+      }
+
+      return {
+        id: group.id,
+        label: group.label,
+        x: group.gridX * defaultCellWidth,
+        y: group.gridY * defaultCellHeight,
+        ...(width !== undefined ? { width } : {}),
+        ...(height !== undefined ? { height } : {}),
+        packing,
+        nodeOrder: [...group.nodeIds],
+        ...(Object.keys(nodesDict).length > 0 ? { nodes: nodesDict } : {}),
+        locked: true
+      };
+    })
   };
 }
 
@@ -318,13 +377,20 @@ function normalizeRawCoordinateGroup(value: unknown, index: number): CoordinateR
     ? value.nodeOrder.map((nodeId, nodeIndex) => requireString(nodeId, `groups[${index}].nodeOrder[${nodeIndex}]`))
     : [];
 
+  const width = typeof value.width === "number" ? value.width : undefined;
+  const height = typeof value.height === "number" ? value.height : undefined;
+  const nodes = isRecord(value.nodes) ? value.nodes as Record<string, { width: number; height: number }> : undefined;
+
   return {
     id,
     label,
     x,
     y,
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
     packing,
     nodeOrder,
+    ...(nodes !== undefined ? { nodes } : {}),
     ...(value.locked === undefined ? {} : { locked: requireBoolean(value.locked, `groups[${index}].locked`) }),
     ...(value.packingLocked === undefined ? {} : { packingLocked: requireBoolean(value.packingLocked, `groups[${index}].packingLocked`) }),
     ...(value.nodeOrderLocked === undefined ? {} : { nodeOrderLocked: requireBoolean(value.nodeOrderLocked, `groups[${index}].nodeOrderLocked`) })
