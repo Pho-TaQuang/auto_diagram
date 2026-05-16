@@ -1340,3 +1340,23 @@ Decision:
 - Physical trunk/spoke paths are committed to occupancy before ordinary semantic edges route, so normal routes avoid divider connector node hits and illegal shared segments.
 - Divider scoring treats node hits, divider interior hits, wrong side, and illegal segment overlap as near-hard failures; non-monotonic spokes and trunk/spoke crossings are much more expensive than bend or length.
 ```
+
+---
+
+## 42. Routing V2 Bend Reduction Decision
+
+Decision:
+
+```text
+- Routing v2 performs a post-routing bend-reduction pass after repair and before routedSegments are exported.
+- Pass 1 targets all normal semantic routes and divider physical trunk/spoke routes with exported waypointCount > 0.
+- Pass 1 reconstructs full route points from selected anchors plus waypoints, removes duplicate, collinear, and endpoint-adjacent stub points, and writes compacted waypoints back to the route object.
+- Compaction is committed only if hard failures, crossings, illegal overlaps, route length, and bend count do not increase, and exported waypoint count decreases.
+- Pass 2 runs after compaction and targets remaining routes with bendCount >= 2.
+- Pass 2 keeps selected anchors and reserved ports unchanged, then tries direct and L-shaped corridor rewrites.
+- A rewrite is committed only if hard failures, crossings, and illegal overlaps do not increase, route length does not increase, and bend count decreases.
+- Rejected compactions and rewrites restore the original path unchanged.
+- Divider trunk/spoke source and target anchor sides must remain unchanged.
+- Divider spokes additionally reject rewrites that violate their monotonic direction.
+- This is a safe route simplification pass, not a new routing strategy.
+```

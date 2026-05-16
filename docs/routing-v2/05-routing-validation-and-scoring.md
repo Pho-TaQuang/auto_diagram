@@ -38,6 +38,23 @@ Direct and corridor candidates infer their source and target sides from the firs
 
 Repair reroutes an edge transactionally: it evaluates replacements against reservations from all other committed routes, then commits the new path and ports only if the replacement improves the route. Rejected repairs leave the old path, anchors, and reserved ports intact.
 
+## Bend Reduction
+
+After routing and repair, routing v2 simplifies routed paths before `routedSegments` are exported. This is post-routing cleanup, not a separate routing strategy.
+
+Pass 1 compacts every normal route and divider physical route that exports at least one waypoint. It reconstructs the full path from selected anchors plus waypoints, removes adjacent duplicates, collinear middle points, and endpoint-adjacent stubs, then writes the compacted waypoints back to the route object. Compaction is committed only when:
+
+- hard failures do not increase
+- illegal segment overlaps do not increase
+- crossings do not increase
+- route length does not increase
+- bend count does not increase
+- exported waypoint count decreases
+
+Pass 2 runs after compaction. It targets remaining routes with at least two bends and tries direct, horizontal-then-vertical, and vertical-then-horizontal rewrites. A rewrite is committed only when the same no-regression checks pass and bend count decreases.
+
+Divider trunk/spoke anchor sides must stay unchanged. Divider spokes also must keep their monotonic direction toward or away from the divider.
+
 ## Segment Overlap Policy
 
 Displayed routed connectors must not share overlapping segments. Sharing a source or target does not make a shared segment legal.

@@ -117,6 +117,21 @@ type AcceptedPath = {
   points: DiagramPoint[];
 };
 
+type RouteSimplificationPass = "compact" | "collapse";
+
+type RouteSimplificationState = {
+  edges: DiagramEdge[];
+  routedDividerConnectors: RoutedPhysicalConnector[];
+  paths: AcceptedPath[];
+};
+
+type RouteSimplificationPassResult = {
+  state: RouteSimplificationState;
+  accepted: number;
+  rejected: number;
+  skipped: number;
+};
+
 type DividerPlanResult = {
   dividers: DiagramRoutingDivider[];
   diagnostics: DiagramDiagnostic[];
@@ -343,7 +358,16 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
   const repaired = options.includeOuterLanes && request.intent.routing.maxRepairPasses > 0
     ? repairRoutedEdges(routedEdges, acceptedPaths, request, routeNodes, diagramBounds, segmentStrategyByEdgeId, portPools, fixedReservedPortKeys)
     : { edges: routedEdges, paths: acceptedPaths, accepted: 0, rejected: 0 };
-  emitFinalFallbackEvents(repaired.edges, repaired.paths, request, routeNodes, segmentStrategyByEdgeId);
+  const bendReduced = reduceRouteBends({
+    routedEdges: repaired.edges,
+    routedDividerConnectors,
+    acceptedPaths: repaired.paths,
+    request,
+    routeNodes,
+    routeNodeById,
+    segmentStrategyByEdgeId
+  });
+  emitFinalFallbackEvents(bendReduced.edges, bendReduced.paths, request, routeNodes, segmentStrategyByEdgeId);
   request.context.run.logger.debug({
     phase: "repair",
     type: "repair-complete",
@@ -354,12 +378,24 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
       maxRepairPasses: options.includeOuterLanes ? request.intent.routing.maxRepairPasses : 0
     }
   });
-  const routedEdgeById = new Map(repaired.edges.map((edge) => [edge.id, edge]));
+  request.context.run.logger.debug({
+    phase: "route",
+    type: "bend-reduction-complete",
+    message: `Route simplification complete: ${bendReduced.accepted} accepted (${bendReduced.compactAccepted} compact, ${bendReduced.collapseAccepted} collapse), ${bendReduced.rejected} rejected, ${bendReduced.skipped} skipped.`,
+    data: {
+      accepted: bendReduced.accepted,
+      compactAccepted: bendReduced.compactAccepted,
+      collapseAccepted: bendReduced.collapseAccepted,
+      rejected: bendReduced.rejected,
+      skipped: bendReduced.skipped
+    }
+  });
+  const routedEdgeById = new Map(bendReduced.edges.map((edge) => [edge.id, edge]));
   const finalEdges = request.document.edges.map((edge) => dividerEdgeIds.has(edge.id)
     ? edge
     : requireMapValue(routedEdgeById, edge.id, "routed edge")
   );
-  const routedDividerSegmentsByEdgeId = routedDividerSegmentsByOwner(routedDividerConnectors);
+  const routedDividerSegmentsByEdgeId = routedDividerSegmentsByOwner(bendReduced.routedDividerConnectors);
   const routedEdgesWithSegments = applyEngineOwnedRoutedSegments(
     finalEdges,
     routedDividerSegmentsByEdgeId,
@@ -775,6 +811,586 @@ function routedDividerSegmentsByOwner(routedConnectors: RoutedPhysicalConnector[
   }
 
   return segmentsByEdgeId;
+}
+
+function reduceRouteBends(input: {
+  routedEdges: DiagramEdge[];
+  routedDividerConnectors: RoutedPhysicalConnector[];
+  acceptedPaths: AcceptedPath[];
+  request: RouteRequest;
+  routeNodes: DiagramNode[];
+  routeNodeById: Map<string, DiagramNode>;
+  segmentStrategyByEdgeId: Map<string, DiagramRoutedEdgeSegmentStrategy>;
+}): {
+  edges: DiagramEdge[];
+  routedDividerConnectors: RoutedPhysicalConnector[];
+  paths: AcceptedPath[];
+  accepted: number;
+  compactAccepted: number;
+  collapseAccepted: number;
+  rejected: number;
+  skipped: number;
+} {
+  const initialState: RouteSimplificationState = {
+    edges: input.routedEdges,
+    routedDividerConnectors: input.routedDividerConnectors,
+    paths: input.acceptedPaths
+  };
+  const compacted = applyRouteSimplificationPass("compact", initialState, input);
+  const collapsed = applyRouteSimplificationPass("collapse", compacted.state, input);
+
+  return {
+    edges: collapsed.state.edges,
+    routedDividerConnectors: collapsed.state.routedDividerConnectors,
+    paths: collapsed.state.paths,
+    accepted: compacted.accepted + collapsed.accepted,
+    compactAccepted: compacted.accepted,
+    collapseAccepted: collapsed.accepted,
+    rejected: compacted.rejected + collapsed.rejected,
+    skipped: compacted.skipped + collapsed.skipped
+  };
+}
+
+function applyRouteSimplificationPass(
+  pass: RouteSimplificationPass,
+  state: RouteSimplificationState,
+  input: {
+    request: RouteRequest;
+    routeNodes: DiagramNode[];
+    routeNodeById: Map<string, DiagramNode>;
+    segmentStrategyByEdgeId: Map<string, DiagramRoutedEdgeSegmentStrategy>;
+  }
+): RouteSimplificationPassResult {
+  let currentEdges = state.edges;
+  let currentDividerConnectors = state.routedDividerConnectors;
+  let currentPaths = state.paths;
+  let accepted = 0;
+  let rejected = 0;
+  let skipped = 0;
+
+  for (const pathRef of [...currentPaths]) {
+    const currentPath = currentPaths.find((path) => path.edge.id === pathRef.edge.id);
+    if (!currentPath) {
+      skipped += 1;
+      continue;
+    }
+
+    const dividerConnector = currentDividerConnectors.find((candidate) => candidate.connector.id === currentPath.edge.id);
+    if (dividerConnector) {
+      const selected = pass === "compact"
+        ? selectRouteCompactionForConnector(dividerConnector, currentPath, currentPaths, input.routeNodes, input.routeNodeById)
+        : selectBendReductionForConnector(dividerConnector, currentPath, currentPaths, input.routeNodes, input.routeNodeById);
+      if (selected === "skipped") {
+        skipped += 1;
+        continue;
+      }
+      if (!selected) {
+        rejected += 1;
+        continue;
+      }
+
+      const otherPaths = currentPaths.filter((path) => path.edge.id !== dividerConnector.connector.id);
+      const hardFailures = routeHardFailureBreakdown(
+        connectorRoutingEdge(dividerConnector.connector),
+        selected.points,
+        input.routeNodes,
+        otherPaths
+      ).hardFailures;
+      const reducedConnector: RoutedPhysicalConnector = {
+        ...dividerConnector,
+        candidate: selected,
+        segmentStrategy: hardFailures > 0 ? dividerConnector.segmentStrategy : "divider",
+        hardFailures
+      };
+      currentDividerConnectors = currentDividerConnectors.map((candidate) =>
+        candidate.connector.id === dividerConnector.connector.id ? reducedConnector : candidate
+      );
+      currentPaths = currentPaths.map((path) =>
+        path.edge.id === dividerConnector.connector.id
+          ? { edge: connectorRoutingEdge(dividerConnector.connector), points: selected.points }
+          : path
+      );
+      accepted += 1;
+      input.request.context.run.logger.debug({
+        phase: "route",
+        type: "bend-reduction-accepted",
+        message: `${pass === "compact" ? "Route compaction" : "Bend reduction"} accepted for divider connector ${dividerConnector.connector.id}.`,
+        edgeId: dividerConnector.connector.ownerEdge.id,
+        data: { connectorId: dividerConnector.connector.id, pass }
+      });
+      continue;
+    }
+
+    const edge = currentEdges.find((candidate) => candidate.id === currentPath.edge.id);
+    if (!edge) {
+      skipped += 1;
+      continue;
+    }
+
+    const selected = pass === "compact"
+      ? selectRouteCompactionForEdge(edge, currentPath, currentPaths, input.routeNodes, input.routeNodeById)
+      : selectBendReductionForEdge(edge, currentPath, currentPaths, input.routeNodes, input.routeNodeById);
+    if (selected === "skipped") {
+      skipped += 1;
+      continue;
+    }
+    if (!selected) {
+      rejected += 1;
+      continue;
+    }
+
+    const reducedEdge: DiagramEdge = {
+      ...edge,
+      layout: {
+        ...edge.layout,
+        sourceAnchor: selected.sourceAnchor,
+        targetAnchor: selected.targetAnchor,
+        waypoints: selected.waypoints,
+        routeSource: "engine-v2"
+      }
+    };
+    currentEdges = currentEdges.map((candidate) => candidate.id === edge.id ? reducedEdge : candidate);
+    currentPaths = currentPaths.map((path) =>
+      path.edge.id === edge.id ? { edge: reducedEdge, points: selected.points } : path
+    );
+    if (pass === "collapse") {
+      input.segmentStrategyByEdgeId.set(edge.id, "corridor");
+    }
+    accepted += 1;
+    input.request.context.run.logger.debug({
+      phase: "route",
+      type: "bend-reduction-accepted",
+      message: `${pass === "compact" ? "Route compaction" : "Bend reduction"} accepted for edge ${edge.id}.`,
+      edgeId: edge.id,
+      data: { pass }
+    });
+  }
+
+  return {
+    state: {
+      edges: currentEdges,
+      routedDividerConnectors: currentDividerConnectors,
+      paths: currentPaths
+    },
+    accepted,
+    rejected,
+    skipped
+  };
+}
+
+function selectRouteCompactionForEdge(
+  edge: DiagramEdge,
+  currentPath: AcceptedPath,
+  acceptedPaths: AcceptedPath[],
+  routeNodes: DiagramNode[],
+  routeNodeById: Map<string, DiagramNode>
+): RouteCandidate | "skipped" | undefined {
+  if (!edge.layout?.sourceAnchor || !edge.layout.targetAnchor) {
+    return "skipped";
+  }
+
+  const source = requireNodeRectangle(requireNode(routeNodeById, edge.sourceId));
+  const target = requireNodeRectangle(requireNode(routeNodeById, edge.targetId));
+  const currentCandidate = reconstructCurrentRouteCandidate({
+    source,
+    target,
+    sourceAnchor: edge.layout.sourceAnchor,
+    targetAnchor: edge.layout.targetAnchor,
+    waypoints: edge.layout.waypoints ?? currentPath.points.slice(1, -1),
+    points: currentPath.points
+  });
+
+  if (currentCandidate.waypoints.length === 0) {
+    return "skipped";
+  }
+
+  return selectRouteCompactionCandidate(
+    edge,
+    currentCandidate,
+    routeNodes,
+    acceptedPaths.filter((path) => path.edge.id !== edge.id)
+  );
+}
+
+function selectRouteCompactionForConnector(
+  routed: RoutedPhysicalConnector,
+  currentPath: AcceptedPath,
+  acceptedPaths: AcceptedPath[],
+  routeNodes: DiagramNode[],
+  routeNodeById: Map<string, DiagramNode>
+): RouteCandidate | "skipped" | undefined {
+  const edge = connectorRoutingEdge(routed.connector);
+  const source = requireNodeRectangle(requireNode(routeNodeById, routed.connector.sourceId));
+  const target = requireNodeRectangle(requireNode(routeNodeById, routed.connector.targetId));
+  const currentCandidate = reconstructCurrentRouteCandidate({
+    source,
+    target,
+    sourceAnchor: routed.candidate.sourceAnchor,
+    targetAnchor: routed.candidate.targetAnchor,
+    sourcePortKey: routed.candidate.sourcePortKey,
+    targetPortKey: routed.candidate.targetPortKey,
+    waypoints: routed.candidate.waypoints.length > 0 ? routed.candidate.waypoints : currentPath.points.slice(1, -1),
+    points: currentPath.points
+  });
+
+  if (currentCandidate.waypoints.length === 0) {
+    return "skipped";
+  }
+
+  return selectRouteCompactionCandidate(
+    edge,
+    currentCandidate,
+    routeNodes,
+    acceptedPaths.filter((path) => path.edge.id !== routed.connector.id),
+    routed.connector
+  );
+}
+
+function reconstructCurrentRouteCandidate(input: {
+  source: Rectangle;
+  target: Rectangle;
+  sourceAnchor: DiagramEdgeAnchor;
+  targetAnchor: DiagramEdgeAnchor;
+  sourcePortKey?: string;
+  targetPortKey?: string;
+  waypoints: DiagramPoint[];
+  points: DiagramPoint[];
+}): RouteCandidate {
+  const waypoints = input.waypoints.length > 0 ? input.waypoints : input.points.slice(1, -1);
+  const points = [
+    anchorPoint(input.source, input.sourceAnchor),
+    ...waypoints,
+    anchorPoint(input.target, input.targetAnchor)
+  ];
+
+  return {
+    sourceAnchor: input.sourceAnchor,
+    targetAnchor: input.targetAnchor,
+    sourcePortKey: input.sourcePortKey,
+    targetPortKey: input.targetPortKey,
+    points,
+    waypoints
+  };
+}
+
+function selectRouteCompactionCandidate(
+  edge: DiagramEdge,
+  currentCandidate: RouteCandidate,
+  routeNodes: DiagramNode[],
+  otherPaths: AcceptedPath[],
+  dividerConnector?: PhysicalConnector
+): RouteCandidate | undefined {
+  const currentQuality = routeQuality(edge, currentCandidate.points, routeNodes, otherPaths);
+  const candidate = canonicalCompactRouteCandidate(currentCandidate);
+  const quality = routeQuality(edge, candidate.points, routeNodes, otherPaths);
+
+  if (candidate.waypoints.length >= currentCandidate.waypoints.length) {
+    return undefined;
+  }
+  if (routeCandidatesEqual(candidate, currentCandidate)) {
+    return undefined;
+  }
+  if (!isOrthogonalRoute(candidate.points) || !bendReductionPreservesDividerConstraints(candidate, currentCandidate, dividerConnector)) {
+    return undefined;
+  }
+  if (quality.hardFailures > currentQuality.hardFailures) {
+    return undefined;
+  }
+  if (quality.illegalSegmentOverlaps > currentQuality.illegalSegmentOverlaps) {
+    return undefined;
+  }
+  if (quality.crossings > currentQuality.crossings) {
+    return undefined;
+  }
+  if (quality.bends > currentQuality.bends) {
+    return undefined;
+  }
+  if (quality.length > currentQuality.length + epsilon) {
+    return undefined;
+  }
+
+  return candidate;
+}
+
+function selectBendReductionForEdge(
+  edge: DiagramEdge,
+  currentPath: AcceptedPath,
+  acceptedPaths: AcceptedPath[],
+  routeNodes: DiagramNode[],
+  routeNodeById: Map<string, DiagramNode>
+): RouteCandidate | "skipped" | undefined {
+  if (!edge.layout?.sourceAnchor || !edge.layout.targetAnchor || countBends(currentPath.points) < 2) {
+    return "skipped";
+  }
+
+  const source = requireNodeRectangle(requireNode(routeNodeById, edge.sourceId));
+  const target = requireNodeRectangle(requireNode(routeNodeById, edge.targetId));
+  const currentCandidate = reconstructCurrentRouteCandidate({
+    source,
+    target,
+    sourceAnchor: edge.layout.sourceAnchor,
+    targetAnchor: edge.layout.targetAnchor,
+    waypoints: edge.layout.waypoints ?? currentPath.points.slice(1, -1),
+    points: currentPath.points
+  });
+
+  return selectBendReductionCandidate(
+    edge,
+    currentCandidate,
+    source,
+    target,
+    routeNodes,
+    acceptedPaths.filter((path) => path.edge.id !== edge.id)
+  );
+}
+
+function selectBendReductionForConnector(
+  routed: RoutedPhysicalConnector,
+  currentPath: AcceptedPath,
+  acceptedPaths: AcceptedPath[],
+  routeNodes: DiagramNode[],
+  routeNodeById: Map<string, DiagramNode>
+): RouteCandidate | "skipped" | undefined {
+  if (countBends(currentPath.points) < 2) {
+    return "skipped";
+  }
+
+  const edge = connectorRoutingEdge(routed.connector);
+  const source = requireNodeRectangle(requireNode(routeNodeById, routed.connector.sourceId));
+  const target = requireNodeRectangle(requireNode(routeNodeById, routed.connector.targetId));
+  const currentCandidate = reconstructCurrentRouteCandidate({
+    source,
+    target,
+    sourceAnchor: routed.candidate.sourceAnchor,
+    targetAnchor: routed.candidate.targetAnchor,
+    sourcePortKey: routed.candidate.sourcePortKey,
+    targetPortKey: routed.candidate.targetPortKey,
+    waypoints: routed.candidate.waypoints.length > 0 ? routed.candidate.waypoints : currentPath.points.slice(1, -1),
+    points: currentPath.points
+  });
+
+  return selectBendReductionCandidate(
+    edge,
+    currentCandidate,
+    source,
+    target,
+    routeNodes,
+    acceptedPaths.filter((path) => path.edge.id !== routed.connector.id),
+    routed.connector
+  );
+}
+
+function selectBendReductionCandidate(
+  edge: DiagramEdge,
+  currentCandidate: RouteCandidate,
+  source: Rectangle,
+  target: Rectangle,
+  routeNodes: DiagramNode[],
+  otherPaths: AcceptedPath[],
+  dividerConnector?: PhysicalConnector
+): RouteCandidate | undefined {
+  const currentQuality = routeQuality(edge, currentCandidate.points, routeNodes, otherPaths);
+  const candidates = uniqueRoutes(bendReductionCandidates(edge.id, currentCandidate, source, target)
+    .map((candidate) => canonicalCompactRouteCandidate(candidate)))
+    .filter((candidate) => !routeCandidatesEqual(candidate, currentCandidate))
+    .filter((candidate) => bendReductionPreservesDividerConstraints(candidate, currentCandidate, dividerConnector));
+  const acceptable = candidates
+    .map((candidate) => ({
+      candidate,
+      quality: routeQuality(edge, candidate.points, routeNodes, otherPaths)
+    }))
+    .filter(({ quality }) => quality.hardFailures <= currentQuality.hardFailures)
+    .filter(({ quality }) => quality.illegalSegmentOverlaps <= currentQuality.illegalSegmentOverlaps)
+    .filter(({ quality }) => quality.crossings <= currentQuality.crossings)
+    .filter(({ quality }) => quality.bends < currentQuality.bends)
+    .filter(({ quality }) => quality.length <= currentQuality.length + epsilon)
+    .sort((left, right) =>
+      left.quality.bends - right.quality.bends ||
+      left.quality.crossings - right.quality.crossings ||
+      left.quality.illegalSegmentOverlaps - right.quality.illegalSegmentOverlaps ||
+      left.quality.length - right.quality.length
+    );
+
+  return acceptable[0]?.candidate;
+}
+
+function bendReductionCandidates(
+  edgeId: string,
+  currentCandidate: RouteCandidate,
+  source: Rectangle,
+  target: Rectangle
+): RouteCandidate[] {
+  const sourcePoint = anchorPoint(source, currentCandidate.sourceAnchor);
+  const targetPoint = anchorPoint(target, currentCandidate.targetAnchor);
+  const sourcePort = outsidePort(sourcePoint, currentCandidate.sourceAnchor, 0);
+  const targetPort = outsidePort(targetPoint, currentCandidate.targetAnchor, 0);
+  const routes: RouteCandidate[] = [];
+
+  if (Math.abs(sourcePort.x - targetPort.x) < epsilon || Math.abs(sourcePort.y - targetPort.y) < epsilon) {
+    routes.push(pointsToRoute(
+      [sourcePoint, sourcePort, targetPort, targetPoint],
+      currentCandidate.sourceAnchor,
+      currentCandidate.targetAnchor,
+      currentCandidate.sourcePortKey,
+      currentCandidate.targetPortKey
+    ));
+  }
+
+  routes.push(pointsToRoute(
+    [sourcePoint, sourcePort, { x: targetPort.x, y: sourcePort.y }, targetPort, targetPoint],
+    currentCandidate.sourceAnchor,
+    currentCandidate.targetAnchor,
+    currentCandidate.sourcePortKey,
+    currentCandidate.targetPortKey
+  ));
+  routes.push(pointsToRoute(
+    [sourcePoint, sourcePort, { x: sourcePort.x, y: targetPort.y }, targetPort, targetPoint],
+    currentCandidate.sourceAnchor,
+    currentCandidate.targetAnchor,
+    currentCandidate.sourcePortKey,
+    currentCandidate.targetPortKey
+  ));
+
+  return uniqueRoutes(routes).filter((candidate) => isOrthogonalRoute(candidate.points));
+}
+
+function bendReductionPreservesDividerConstraints(
+  candidate: RouteCandidate,
+  currentCandidate: RouteCandidate,
+  connector: PhysicalConnector | undefined
+): boolean {
+  if (!connector) {
+    return true;
+  }
+  if (candidate.sourceAnchor.side !== currentCandidate.sourceAnchor.side ||
+    candidate.targetAnchor.side !== currentCandidate.targetAnchor.side) {
+    return false;
+  }
+  if (connector.sourceSide && candidate.sourceAnchor.side !== connector.sourceSide) {
+    return false;
+  }
+  if (connector.targetSide && candidate.targetAnchor.side !== connector.targetSide) {
+    return false;
+  }
+  return !connector.monotonic || countNonMonotonicSteps(candidate.points, connector.monotonic) === 0;
+}
+
+function routeQuality(
+  edge: DiagramEdge,
+  points: DiagramPoint[],
+  routeNodes: DiagramNode[],
+  acceptedPaths: AcceptedPath[]
+): { hardFailures: number; illegalSegmentOverlaps: number; crossings: number; bends: number; length: number } {
+  const breakdown = routeHardFailureBreakdown(edge, points, routeNodes, acceptedPaths);
+  return {
+    hardFailures: breakdown.hardFailures,
+    illegalSegmentOverlaps: breakdown.segmentOverlaps,
+    crossings: countCrossingsWithAccepted(points, acceptedPaths),
+    bends: countBends(points),
+    length: pathLength(points)
+  };
+}
+
+function isOrthogonalRoute(points: DiagramPoint[]): boolean {
+  return pathSegments(points).every(([start, end]) =>
+    Math.abs(start.x - end.x) < epsilon || Math.abs(start.y - end.y) < epsilon
+  );
+}
+
+export function __testSelectBendReductionCandidate(input: {
+  edge: DiagramEdge;
+  source: Rectangle;
+  target: Rectangle;
+  sourceAnchor: DiagramEdgeAnchor;
+  targetAnchor: DiagramEdgeAnchor;
+  points: DiagramPoint[];
+  routeNodes: DiagramNode[];
+  acceptedPaths?: AcceptedPath[];
+  dividerConstraints?: {
+    sourceSide?: DiagramEdgeAnchorSide;
+    targetSide?: DiagramEdgeAnchorSide;
+    monotonic?: SpokeMonotonicDirection;
+  };
+}): { points: DiagramPoint[]; waypoints: DiagramPoint[]; sourceAnchor: DiagramEdgeAnchor; targetAnchor: DiagramEdgeAnchor } | undefined {
+  const connector: PhysicalConnector | undefined = input.dividerConstraints
+    ? {
+      id: input.edge.id,
+      ownerEdge: input.edge,
+      sourceId: input.edge.sourceId,
+      targetId: input.edge.targetId,
+      label: input.edge.label ?? "",
+      kind: "divider-spoke",
+      markerPolicy: { start: true, end: true },
+      routeOrder: 0,
+      sourceSide: input.dividerConstraints.sourceSide,
+      targetSide: input.dividerConstraints.targetSide,
+      monotonic: input.dividerConstraints.monotonic
+    }
+    : undefined;
+
+  return selectBendReductionCandidate(
+    input.edge,
+    {
+      sourceAnchor: input.sourceAnchor,
+      targetAnchor: input.targetAnchor,
+      points: input.points,
+      waypoints: input.points.slice(1, -1)
+    },
+    input.source,
+    input.target,
+    input.routeNodes,
+    input.acceptedPaths ?? [],
+    connector
+  );
+}
+
+export function __testSelectRouteCompactionCandidate(input: {
+  edge: DiagramEdge;
+  source: Rectangle;
+  target: Rectangle;
+  sourceAnchor: DiagramEdgeAnchor;
+  targetAnchor: DiagramEdgeAnchor;
+  points: DiagramPoint[];
+  routeNodes: DiagramNode[];
+  acceptedPaths?: AcceptedPath[];
+  dividerConstraints?: {
+    sourceSide?: DiagramEdgeAnchorSide;
+    targetSide?: DiagramEdgeAnchorSide;
+    monotonic?: SpokeMonotonicDirection;
+  };
+}): { points: DiagramPoint[]; waypoints: DiagramPoint[]; sourceAnchor: DiagramEdgeAnchor; targetAnchor: DiagramEdgeAnchor } | undefined {
+  const connector: PhysicalConnector | undefined = input.dividerConstraints
+    ? {
+      id: input.edge.id,
+      ownerEdge: input.edge,
+      sourceId: input.edge.sourceId,
+      targetId: input.edge.targetId,
+      label: input.edge.label ?? "",
+      kind: "divider-spoke",
+      markerPolicy: { start: true, end: true },
+      routeOrder: 0,
+      sourceSide: input.dividerConstraints.sourceSide,
+      targetSide: input.dividerConstraints.targetSide,
+      monotonic: input.dividerConstraints.monotonic
+    }
+    : undefined;
+
+  const currentCandidate = reconstructCurrentRouteCandidate({
+    source: input.source,
+    target: input.target,
+    sourceAnchor: input.sourceAnchor,
+    targetAnchor: input.targetAnchor,
+    waypoints: input.points.slice(1, -1),
+    points: input.points
+  });
+
+  return selectRouteCompactionCandidate(
+    input.edge,
+    currentCandidate,
+    input.routeNodes,
+    input.acceptedPaths ?? [],
+    connector
+  );
 }
 
 function selectRouteCandidate(
@@ -1912,6 +2528,57 @@ function preserveTerminalStubs(points: DiagramPoint[], sourceStub: DiagramPoint 
     next.splice(next.length - 1, 0, targetStub);
   }
   return next.filter((point, index, all) => index === 0 || !pointsEqual(point, all[index - 1]));
+}
+
+function canonicalCompactRouteCandidate(candidate: RouteCandidate): RouteCandidate {
+  const points = canonicalCompactRoutePoints(candidate.points);
+  return {
+    ...candidate,
+    points,
+    waypoints: points.slice(1, -1)
+  };
+}
+
+function canonicalCompactRoutePoints(points: DiagramPoint[]): DiagramPoint[] {
+  const deduped = removeAdjacentDuplicatePoints(points);
+  const withoutCollinear = removeCollinearMiddlePoints(deduped);
+  const withoutEndpointStubs = removeEndpointAdjacentStubs(withoutCollinear);
+  return removeCollinearMiddlePoints(removeAdjacentDuplicatePoints(withoutEndpointStubs));
+}
+
+function removeAdjacentDuplicatePoints(points: DiagramPoint[]): DiagramPoint[] {
+  const next: DiagramPoint[] = [];
+  for (const point of points) {
+    if (next.length === 0 || !pointsEqual(point, next[next.length - 1])) {
+      next.push(point);
+    }
+  }
+  return next;
+}
+
+function removeCollinearMiddlePoints(points: DiagramPoint[]): DiagramPoint[] {
+  return points.filter((point, index, all) => {
+    if (index === 0 || index === all.length - 1) {
+      return true;
+    }
+    return !sameAxis(all[index - 1], point, all[index + 1]);
+  });
+}
+
+function removeEndpointAdjacentStubs(points: DiagramPoint[]): DiagramPoint[] {
+  const next = [...points];
+  if (next.length >= 3 && sameAxis(next[0], next[1], next[2])) {
+    next.splice(1, 1);
+  }
+  if (next.length >= 3 && sameAxis(next[next.length - 3], next[next.length - 2], next[next.length - 1])) {
+    next.splice(next.length - 2, 1);
+  }
+  return next;
+}
+
+function sameAxis(first: DiagramPoint, middle: DiagramPoint, last: DiagramPoint): boolean {
+  return (Math.abs(first.x - middle.x) < epsilon && Math.abs(middle.x - last.x) < epsilon) ||
+    (Math.abs(first.y - middle.y) < epsilon && Math.abs(middle.y - last.y) < epsilon);
 }
 
 function routeHardFailureBreakdown(edge: DiagramEdge, points: DiagramPoint[], nodes: DiagramNode[], acceptedPaths: AcceptedPath[]): RouteHardFailureBreakdown {

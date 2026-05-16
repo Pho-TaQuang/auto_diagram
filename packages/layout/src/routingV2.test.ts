@@ -16,10 +16,13 @@ import {
 import type { LayoutRunContext } from "./engine/LayoutEngine.js";
 import type {
   DiagramDocument,
+  DiagramEdge,
   DiagramEdgeAnchor,
+  DiagramPoint,
   DiagramRoutingDivider,
   DiagramRoutedEdgeSegment
 } from "../../core/src/index.js";
+import { __testSelectBendReductionCandidate, __testSelectRouteCompactionCandidate } from "./routing/templateRouter.js";
 
 export function runRoutingV2Tests(): void {
   runRoutingV2Slice1Tests();
@@ -84,6 +87,13 @@ export function runRoutingV2Slice5ATests(): void {
   privateOffsetsAvoidSegmentOverlap();
   cleanCandidatePreferredOverDirtyCandidate();
   recoveryAvoidsFormerBestEffortFallback();
+  routeCompactionRunsBelowTwoBends();
+  routeCompactionReducesWaypointsWithoutBendReduction();
+  bendReductionCollapsesCleanZRoute();
+  bendReductionRejectsNodeHit();
+  bendReductionRejectsIllegalOverlap();
+  bendReductionRejectsCrossingIncrease();
+  bendReductionRejectsNonMonotonicDividerSpoke();
 }
 
 export function runRoutingV2Slice5BTests(): void {
@@ -512,7 +522,6 @@ function gapBetweenRoutingStaysInsideCleanGap(): void {
   assert.ok(source?.layout);
   assert.ok(target?.layout);
   assert.equal(result.report.routingSummary?.hardValid, true);
-  assert.ok(waypoints.length > 0);
   assert.ok(waypoints.every((point) => point.x > source.layout!.x + source.layout!.width && point.x < target.layout!.x));
   assert.equal(result.report.trace?.some((event) => event.type === "outer-lane-used"), false);
 }
@@ -642,6 +651,24 @@ function pathSegments(points: Array<{ x: number; y: number }>): Array<[{ x: numb
   return points.slice(1).map((point, index) => [points[index], point]);
 }
 
+function countBends(points: Array<{ x: number; y: number }>): number {
+  const axes = pathSegments(points)
+    .map(([start, end]) => start.x === end.x ? "v" : start.y === end.y ? "h" : "d")
+    .filter((axis) => axis !== "d");
+  let bends = 0;
+  for (let index = 1; index < axes.length; index += 1) {
+    if (axes[index] !== axes[index - 1]) {
+      bends += 1;
+    }
+  }
+  return bends;
+}
+
+function pathLength(points: Array<{ x: number; y: number }>): number {
+  return pathSegments(points).reduce((total, [start, end]) =>
+    total + Math.abs(start.x - end.x) + Math.abs(start.y - end.y), 0);
+}
+
 function oppositeSide(side: DiagramEdgeAnchor["side"]): DiagramEdgeAnchor["side"] {
   if (side === "north") {
     return "south";
@@ -722,19 +749,22 @@ function terminalStubsMoveOutsideNodes(): void {
   assert.ok(edge.layout?.sourceAnchor);
   assert.ok(edge.layout.routedSegments?.[0]);
   const source = result.document.nodes.find((node) => node.id === edge.sourceId);
+  const target = result.document.nodes.find((node) => node.id === edge.targetId);
   assert.ok(source?.layout);
+  assert.ok(target?.layout);
+  assert.ok(edge.layout.routedSegments[0].targetAnchor);
   const anchor = anchorPoint(source.layout, edge.layout.sourceAnchor);
-  const firstWaypoint = edge.layout.routedSegments[0].waypoints[0];
-  assert.ok(firstWaypoint);
+  const firstSegmentEnd = edge.layout.routedSegments[0].waypoints[0] ??
+    anchorPoint(target.layout, edge.layout.routedSegments[0].targetAnchor);
 
   if (edge.layout.sourceAnchor.side === "east") {
-    assert.ok(firstWaypoint.x > anchor.x);
+    assert.ok(firstSegmentEnd.x > anchor.x);
   } else if (edge.layout.sourceAnchor.side === "west") {
-    assert.ok(firstWaypoint.x < anchor.x);
+    assert.ok(firstSegmentEnd.x < anchor.x);
   } else if (edge.layout.sourceAnchor.side === "north") {
-    assert.ok(firstWaypoint.y < anchor.y);
+    assert.ok(firstSegmentEnd.y < anchor.y);
   } else {
-    assert.ok(firstWaypoint.y > anchor.y);
+    assert.ok(firstSegmentEnd.y > anchor.y);
   }
 }
 
@@ -766,6 +796,189 @@ function recoveryAvoidsFormerBestEffortFallback(): void {
   assert.equal(result.report.routingSummary?.hardValid, true);
 }
 
+function routeCompactionRunsBelowTwoBends(): void {
+  const source = node("A", 0, 0);
+  const target = node("B", 160, 100);
+  const sourceAnchor: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const targetAnchor: DiagramEdgeAnchor = { side: "north", ratio: 0.5 };
+  const edge: DiagramEdge = {
+    id: "edge_compact_one_bend",
+    sourceId: source.id,
+    targetId: target.id,
+    kind: "directedAssociation",
+    operator: "-->"
+  };
+  const points: DiagramPoint[] = [
+    anchorPoint(source.layout, sourceAnchor),
+    { x: 124, y: 20 },
+    { x: 200, y: 20 },
+    { x: 200, y: 76 },
+    anchorPoint(target.layout, targetAnchor)
+  ];
+  const selected = __testSelectRouteCompactionCandidate({
+    edge,
+    source: { id: source.id, ...source.layout },
+    target: { id: target.id, ...target.layout },
+    sourceAnchor,
+    targetAnchor,
+    points,
+    routeNodes: [source, target]
+  });
+
+  assert.ok(selected);
+  assert.equal(countBends(points), 1);
+  assert.equal(countBends(selected.points), 1);
+  assert.ok(selected.waypoints.length < points.slice(1, -1).length);
+}
+
+function routeCompactionReducesWaypointsWithoutBendReduction(): void {
+  const source = node("A", 0, 0);
+  const target = node("B", 300, 100);
+  const sourceAnchor: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const targetAnchor: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+  const edge: DiagramEdge = {
+    id: "edge_compact_same_bends",
+    sourceId: source.id,
+    targetId: target.id,
+    kind: "directedAssociation",
+    operator: "-->"
+  };
+  const points: DiagramPoint[] = [
+    anchorPoint(source.layout, sourceAnchor),
+    { x: 124, y: 20 },
+    { x: 160, y: 20 },
+    { x: 200, y: 20 },
+    { x: 200, y: 120 },
+    { x: 250, y: 120 },
+    { x: 276, y: 120 },
+    anchorPoint(target.layout, targetAnchor)
+  ];
+  const selected = __testSelectRouteCompactionCandidate({
+    edge,
+    source: { id: source.id, ...source.layout },
+    target: { id: target.id, ...target.layout },
+    sourceAnchor,
+    targetAnchor,
+    points,
+    routeNodes: [source, target]
+  });
+
+  assert.ok(selected);
+  assert.equal(countBends(selected.points), countBends(points));
+  assert.ok(selected.waypoints.length < points.slice(1, -1).length);
+  assert.ok(pathLength(selected.points) <= pathLength(points));
+}
+
+function bendReductionCollapsesCleanZRoute(): void {
+  const fixture = bendReductionFixture();
+  const selected = __testSelectBendReductionCandidate(fixture);
+
+  assert.ok(selected);
+  assert.ok(countBends(selected.points) < countBends(fixture.points));
+  assert.ok(pathLength(selected.points) <= pathLength(fixture.points));
+}
+
+function bendReductionRejectsNodeHit(): void {
+  const fixture = bendReductionFixture({
+    extraNodes: [
+      node("block_vh", 90, 150),
+      node("block_hv", 260, 100)
+    ]
+  });
+
+  assert.equal(__testSelectBendReductionCandidate(fixture), undefined);
+}
+
+function bendReductionRejectsIllegalOverlap(): void {
+  const fixture = bendReductionFixture({
+    acceptedPaths: [
+      occupancyPath("occ_hv", [{ x: 276, y: 60 }, { x: 276, y: 180 }]),
+      occupancyPath("occ_vh", [{ x: 104, y: 150 }, { x: 104, y: 210 }])
+    ]
+  });
+
+  assert.equal(__testSelectBendReductionCandidate(fixture), undefined);
+}
+
+function bendReductionRejectsCrossingIncrease(): void {
+  const fixture = bendReductionFixture({
+    acceptedPaths: [
+      occupancyPath("cross_hv", [{ x: 150, y: 0 }, { x: 150, y: 40 }]),
+      occupancyPath("cross_vh", [{ x: 80, y: 160 }, { x: 130, y: 160 }])
+    ]
+  });
+
+  assert.equal(__testSelectBendReductionCandidate(fixture), undefined);
+}
+
+function bendReductionRejectsNonMonotonicDividerSpoke(): void {
+  const fixture = bendReductionFixture({
+    dividerConstraints: {
+      sourceSide: "east",
+      targetSide: "west",
+      monotonic: "left"
+    }
+  });
+
+  assert.equal(__testSelectBendReductionCandidate(fixture), undefined);
+}
+
+function bendReductionFixture(options: {
+  extraNodes?: ReturnType<typeof node>[];
+  acceptedPaths?: Array<{ edge: DiagramEdge; points: DiagramPoint[] }>;
+  dividerConstraints?: {
+    sourceSide?: DiagramEdgeAnchor["side"];
+    targetSide?: DiagramEdgeAnchor["side"];
+    monotonic?: "up" | "down" | "left" | "right";
+  };
+} = {}) {
+  const source = node("A", 0, 0);
+  const target = node("B", 300, 200);
+  const sourceAnchor: DiagramEdgeAnchor = { side: "east", ratio: 0.5 };
+  const targetAnchor: DiagramEdgeAnchor = { side: "west", ratio: 0.5 };
+  const edge: DiagramEdge = {
+    id: "edge_z",
+    sourceId: source.id,
+    targetId: target.id,
+    kind: "directedAssociation",
+    operator: "-->"
+  };
+  const points: DiagramPoint[] = [
+    anchorPoint(source.layout, sourceAnchor),
+    { x: 104, y: 20 },
+    { x: 104, y: 120 },
+    { x: 180, y: 120 },
+    { x: 180, y: 220 },
+    { x: 276, y: 220 },
+    anchorPoint(target.layout, targetAnchor)
+  ];
+
+  return {
+    edge,
+    source: { id: source.id, ...source.layout },
+    target: { id: target.id, ...target.layout },
+    sourceAnchor,
+    targetAnchor,
+    points,
+    routeNodes: [source, target, ...(options.extraNodes ?? [])],
+    acceptedPaths: options.acceptedPaths,
+    dividerConstraints: options.dividerConstraints
+  };
+}
+
+function occupancyPath(id: string, points: DiagramPoint[]): { edge: DiagramEdge; points: DiagramPoint[] } {
+  return {
+    edge: {
+      id,
+      sourceId: `${id}_source`,
+      targetId: `${id}_target`,
+      kind: "directedAssociation",
+      operator: "-->"
+    },
+    points
+  };
+}
+
 function generatedDemoFixtureReachesStrictGoldenRoutingTarget(): void {
   const parsed = parseMermaidClassDiagram(readFileSync("docs/demo_mermaid.md", "utf8"));
   const result = createDefaultLayoutEngineRegistry().get("suggest-initial-v2").run({
@@ -777,6 +990,7 @@ function generatedDemoFixtureReachesStrictGoldenRoutingTarget(): void {
   assertStrictGoldenRoutingTarget(result);
   assert.ok(result.report.trace?.some((event) => event.type === "generated-layout-candidate-evaluated"));
   assert.ok(result.report.trace?.some((event) => event.type === "route-order-selected"));
+  assert.ok(result.report.trace?.some((event) => event.type === "bend-reduction-accepted"));
 }
 
 function lockedDemoFixtureReachesStrictGoldenRoutingTarget(): void {
