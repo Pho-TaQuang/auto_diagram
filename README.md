@@ -1,12 +1,12 @@
-# Additional README Sections
+# AutoDiagram
 
-## Vision
+AutoDiagram is an open-source diagram generation and layout engine focused on converting structured software architecture input into editable UML diagrams for draw.io / diagrams.net.
 
-AutoDiagram is an open-source diagram generation engine focused on converting structured software architecture input into editable UML diagrams.
+The project converts Mermaid `classDiagram` input into deterministic draw.io `mxGraphModel` XML while preserving semantic UML structure, deterministic layout behavior, and editable routing metadata.
 
-The long-term project goal is:
+AutoDiagram is designed as a long-term foundation for:
 
-```text id="7s84e8"
+```text
 source code / architecture metadata
     ↓
 semantic intermediate model
@@ -16,17 +16,34 @@ deterministic layout + routing
 editable UML diagrams
 ```
 
-The project is intended to support multiple diagram types in the future, including:
+The current implementation focuses primarily on UML class diagrams.
+
+---
+
+# Vision
+
+AutoDiagram is intended to become a reusable infrastructure layer for architecture visualization and semantic diagram generation.
+
+Future target diagram types include:
 
 * UML class diagrams
 * sequence diagrams
 * component diagrams
 * entity relationship diagrams
+* infrastructure topology diagrams
 * architecture dependency graphs
 * bounded-context maps
-* infrastructure topology diagrams
 
-Current development focuses primarily on UML class diagrams.
+The long-term goal is to support:
+
+```text
+raw source code
+→ semantic extraction
+→ knowledge graph
+→ deterministic diagram generation
+```
+
+However, generalized semantic extraction and knowledge-graph generation are not implemented yet.
 
 ---
 
@@ -34,15 +51,15 @@ Current development focuses primarily on UML class diagrams.
 
 AutoDiagram currently requires structured input.
 
-The engine does not yet perform full codebase semantic extraction or generalized knowledge-graph inference.
+The engine does not yet perform full semantic understanding of arbitrary codebases.
 
-At the moment, the supported production input format is:
+The supported production input format is currently:
 
 * Mermaid `classDiagram`
 
-This means:
+Current workflow:
 
-```text id="2lkgwy"
+```text
 codebase
 → structured semantic representation
 → AutoDiagram
@@ -50,15 +67,13 @@ codebase
 
 rather than:
 
-```text id="4bq8oq"
+```text
 raw source code
 → automatic semantic understanding
 → diagram
 ```
 
-Knowledge-graph generation and large-scale semantic code extraction are future roadmap items.
-
-The current architecture intentionally separates:
+The architecture intentionally separates:
 
 * parsing
 * semantic modeling
@@ -66,39 +81,315 @@ The current architecture intentionally separates:
 * routing
 * export
 
-so additional language parsers and semantic extractors can be added later without rewriting the routing or draw.io export engines.
+This separation allows future language parsers and semantic extractors to be added without rewriting routing or export systems.
 
 ---
 
-# Open Source Status
+# Core Pipeline
 
-AutoDiagram is intended as an open-source infrastructure project.
-
-The repository is designed to support:
-
-* reusable layout/routing packages
-* CLI usage
-* web-based editing
-* future language adapters
-* external integrations
-
-The codebase favors:
-
-* deterministic behavior
-* stable intermediate models
-* explicit diagnostics
-* testable routing behavior
-* reproducible export output
+```text
+Mermaid classDiagram
+    ↓
+Parser
+    ↓
+DiagramDocument (semantic model)
+    ↓
+Layout engine
+    ↓
+Routing engine
+    ↓
+mxGraphModel XML exporter
+    ↓
+.drawio / raw XML
+```
 
 ---
 
-# NPM Packages
+# Project Goals
 
-The project exposes reusable packages through npm.
+The project is built around several core principles:
+
+* deterministic output from identical semantic input
+* semantic UML preserved independently from layout state
+* editable layout intent without modifying UML semantics
+* orthogonal routing with readable connector topology
+* stable draw.io-compatible output
+* client-side execution without backend dependency
+* explicit diagnostics and validation
+* reproducible regression testing
+
+The system is optimized for:
+
+* layered enterprise architectures
+* DTO/service/controller flows
+* dependency-heavy systems
+* dense UML relationship graphs
+* architecture documentation pipelines
+
+---
+
+# Main Components
+
+## Mermaid Parser
+
+Parses Mermaid `classDiagram` input into a semantic `DiagramDocument`.
+
+The parser extracts:
+
+* classes
+* stereotypes
+* attributes
+* methods
+* constructors
+* relationships
+* multiplicities
+* relationship labels
+
+The parser does not generate layout geometry.
+
+---
+
+## Layout Engine
+
+The layout engine computes:
+
+* stereotype group placement
+* node placement
+* node sizing
+* packing direction
+* anchor assignment
+* routing metadata
+* layout diagnostics
+* score metrics
+
+The layout system supports deterministic candidate generation and scored layout selection.
+
+---
+
+## Routing Engine
+
+Routing-v2 is the current advanced orthogonal routing system.
+
+Features include:
+
+* deterministic anchor slots
+* corridor routing
+* outer-lane routing
+* routing dividers
+* sparse lane-graph recovery
+* local route repair
+* overlap validation
+* crossing diagnostics
+* hard validation reporting
+
+The router prioritizes:
+
+```text
+semantic correctness
+→ node avoidance
+→ edge identity preservation
+→ crossing reduction
+→ compactness
+```
+
+---
+
+## Routing Dividers
+
+Dense fan-in and fan-out relationships may be expanded into routing divider graphs.
+
+Example:
+
+```text
+A → B1
+A → B2
+A → B3
+A → B4
+```
+
+becomes:
+
+```text
+A → divider → B1/B2/B3/B4
+```
+
+Dividers:
+
+* participate in routing occupancy
+* behave as routing obstacles
+* preserve semantic relationships
+* reduce connector congestion
+* remain deterministic
+
+Dividers are routing primitives, not post-processing decorations.
+
+---
+
+## Draw.io Exporter
+
+Exports raw `mxGraphModel` XML.
+
+Features include:
+
+* UML swimlane class rendering
+* orthogonal routed edges
+* explicit anchor positions
+* waypoint serialization
+* multiplicity edge labels
+* deterministic cell IDs
+* optional stereotype group frames
+
+Example generated IDs:
+
+```text
+node_1
+edge_3
+group_frame_2
+divider_1
+```
+
+The exporter intentionally avoids:
+
+* compressed `.drawio` blobs
+* `<mxfile>` wrappers
+* exporter-side rerouting
+
+Routing ownership belongs to the routing engine.
+
+---
+
+## Web UI
+
+The web UI is a React + Vite editor built directly on the AutoDiagram engine.
+
+The editable source of truth is the `mxGraphModel`.
+
+Features include:
+
+* Mermaid editing
+* XML import/export
+* layout intent editing
+* orthogonal edge editing
+* terminal reconnection
+* group placement editing
+* zoom/pan
+* undo/redo
+* SVG preview
+* diagnostics panel
+* routing score display
+
+The web UI intentionally does not embed the official draw.io editor.
+
+---
+
+# Repository Structure
+
+```text
+packages/
+  core/          Shared semantic + layout types
+  parser/        Mermaid parser
+  layout/        Layout and routing engines
+  drawio/        mxGraphModel exporter
+
+apps/
+  web/           React + Vite editor
+
+scripts/
+  autodiagram_standalone.py
+
+docs/
+  demo_mermaid.md
+
+tests/
+  fixtures/
+```
+
+---
+
+# Supported Mermaid Subset
+
+Supported syntax includes:
+
+* `classDiagram`
+* `class Name { ... }`
+* stereotypes
+* attributes
+* methods
+* constructors
+* return types
+* multiplicities
+* relationship labels
+
+Supported relationship operators:
+
+```text
+--
+-->
+<--
+..
+..>
+<..
+<|..
+..|>
+<|--
+--|>
+o--
+--o
+*--
+--*
+```
+
+Example:
+
+```mermaid
+classDiagram
+
+class User {
+  <<Entity>>
+  +id: Guid
+  +name: string
+}
+
+class Order {
+  <<Model>>
+  +total: decimal
+}
+
+User "1" -- "0..*" Order : owns
+```
+
+---
+
+# Layout Intent
+
+The engine separates semantic UML from layout intent.
+
+Layout intent controls:
+
+* group placement
+* packing direction
+* node ordering
+* routing preferences
+
+Semantic UML remains unchanged.
+
+Example workflow:
+
+```bash
+npm run layout:init -- docs/demo_mermaid.md -o out/demo.layout.json
+
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.layout.json
+```
+
+---
+
+# Open Source Packages
+
+AutoDiagram exposes reusable npm packages.
 
 Example installation:
 
-```bash id="fuxzpq"
+```bash
 npm install @autodiagram/core
 npm install @autodiagram/parser-mermaid
 npm install @autodiagram/layout
@@ -107,7 +398,7 @@ npm install @autodiagram/export-drawio
 
 Example usage:
 
-```ts id="d6qkj7"
+```ts
 import { parseMermaidClassDiagram } from "@autodiagram/parser-mermaid";
 import { generateLayout } from "@autodiagram/layout";
 import { exportDrawioXml } from "@autodiagram/export-drawio";
@@ -120,23 +411,174 @@ const xml = exportDrawioXml(layout);
 
 CLI installation:
 
-```bash id="ygd8kt"
+```bash
 npm install -g @autodiagram/cli
 ```
 
 CLI usage:
 
-```bash id="n6mnfp"
+```bash
 autodiagram generate input.mmd -o output.drawio
 ```
 
 ---
 
-# Codebase Standards
+# Commands
 
-The project prioritizes long-term maintainability and deterministic behavior.
+## Install
 
-All contributions should follow the standards below.
+```bash
+npm install
+```
+
+---
+
+## Build
+
+```bash
+npm run build
+```
+
+---
+
+## Run Tests
+
+```bash
+npm test
+```
+
+Python regression tests:
+
+```bash
+npm run test:python
+```
+
+---
+
+## Start Web UI
+
+```bash
+npm run web:dev
+```
+
+Build production web bundle:
+
+```bash
+npm run web:build
+```
+
+---
+
+## Generate Diagram
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio
+```
+
+---
+
+## Create Layout Intent
+
+```bash
+npm run layout:init -- docs/demo_mermaid.md -o out/demo.layout.json
+```
+
+---
+
+## Generate Using Layout Intent
+
+```bash
+npm run generate -- docs/demo_mermaid.md -o out/demo.drawio --layout out/demo.layout.json
+```
+
+---
+
+## Generate With Group Frames
+
+```bash
+npm run generate \
+  -- docs/demo_mermaid.md \
+  -o out/demo.drawio \
+  --group-frames
+```
+
+---
+
+## Routing V2
+
+```bash
+npm run layout:init \
+  -- docs/demo_mermaid.md \
+  -o out/demo.routing-v3.json \
+  --engine v2
+
+npm run generate \
+  -- docs/demo_mermaid.md \
+  -o out/demo-v2.drawio \
+  --layout out/demo.routing-v3.json \
+  --engine v2
+```
+
+---
+
+# Standalone Python Pipeline
+
+The repository includes a standalone Python routing-v2 implementation:
+
+```text
+scripts/autodiagram_standalone.py
+```
+
+Requirements:
+
+* Python 3.10+
+* standard library only
+
+Pipeline:
+
+```text
+Mermaid
+→ semantic model
+→ routing-v2 layout
+→ mxGraphModel XML
+```
+
+The Python pipeline is intended for:
+
+* regression testing
+* portable generation
+* offline routing experiments
+* algorithm prototyping
+
+It is not intended as a backend service.
+
+---
+
+# Diagnostics
+
+Routing-v2 exposes structured diagnostics and validation data.
+
+Examples:
+
+* edge crossings
+* node hits
+* routing failures
+* divider overflow
+* illegal segment overlaps
+* repair counts
+
+Diagnostics are exposed through:
+
+* CLI reports
+* JSON reports
+* web UI layout state
+
+Recommended architecture:
+
+```text
+Diagnostics = stable product data
+Trace events = debug timeline
+```
 
 ---
 
@@ -144,28 +586,20 @@ All contributions should follow the standards below.
 
 AutoDiagram follows Semantic Versioning:
 
-```text id="hj2vr8"
+```text
 MAJOR.MINOR.PATCH
 ```
 
 Rules:
 
 * MAJOR:
-  breaking intermediate model or public API changes
+  breaking API or intermediate model changes
 * MINOR:
   backward-compatible features
 * PATCH:
   bug fixes and deterministic behavior fixes
 
-Examples:
-
-```text id="jlwm4u"
-2.0.0
-2.3.0
-2.3.4
-```
-
-Routing score changes that alter generated layout topology should be treated as MINOR changes because output structure may differ even if APIs remain stable.
+Routing score changes that alter generated topology should be treated as MINOR changes.
 
 Intermediate model schema changes must include migration notes.
 
@@ -173,48 +607,52 @@ Intermediate model schema changes must include migration notes.
 
 # Naming Conventions
 
-## TypeScript
-
-### Types
+## TypeScript Types
 
 Use PascalCase:
 
-```ts id="q4az0l"
+```ts
 DiagramDocument
 RoutingCandidate
 LayoutDiagnostics
 ```
 
-### Functions
+---
+
+## Functions
 
 Use camelCase:
 
-```ts id="gkjlwm"
+```ts
 generateLayout()
 routeConnectorGraph()
 exportDrawioXml()
 ```
 
-### Constants
+---
 
-Use SCREAMING_SNAKE_CASE only for true immutable constants:
+## Constants
 
-```ts id="jib04j"
+Use SCREAMING_SNAKE_CASE only for immutable constants:
+
+```ts
 MAX_ROUTE_REPAIR_ITERATIONS
 DEFAULT_GROUP_PADDING
 ```
 
-### Files
+---
+
+## Files
 
 Use:
 
-```text id="qjlwmr"
+```text
 kebab-case.ts
 ```
 
 Examples:
 
-```text id="8bxg4x"
+```text
 template-router.ts
 drawio-exporter.ts
 routing-diagnostics.ts
@@ -222,7 +660,7 @@ routing-diagnostics.ts
 
 Avoid:
 
-```text id="n7qv1p"
+```text
 TemplateRouter.ts
 drawIOExporter.ts
 ```
@@ -231,7 +669,7 @@ drawIOExporter.ts
 
 # Routing Terminology Rules
 
-Use terminology consistently across the repository.
+Use consistent terminology across the repository.
 
 Preferred terms:
 
@@ -244,9 +682,9 @@ Preferred terms:
 | route repair       | cleanup       |
 | hard validation    | strict mode   |
 
-This is important because routing-v2 internally distinguishes:
+Routing-v2 internally distinguishes:
 
-```text id="lcuh2s"
+```text
 semantic relationships
 vs
 physical routed segments
@@ -264,13 +702,11 @@ The following are prohibited unless explicitly documented:
 * unstable iteration ordering
 * nondeterministic hash iteration
 * timestamp-derived IDs
-* UUID-based exported cell IDs
-
-Generated IDs must remain stable across runs.
+* UUID-based exported IDs
 
 Allowed:
 
-```text id="jlwmg8"
+```text
 node_1
 edge_7
 divider_2
@@ -278,7 +714,7 @@ divider_2
 
 Disallowed:
 
-```text id="mjlwm3"
+```text
 550e8400-e29b-41d4-a716-446655440000
 ```
 
@@ -290,14 +726,14 @@ Public packages should expose stable entry points.
 
 Preferred:
 
-```ts id="5st0jv"
+```ts
 @autodiagram/layout
 @autodiagram/core
 ```
 
 Avoid deep imports:
 
-```ts id="07a1n3"
+```ts
 @autodiagram/layout/src/internal/router
 ```
 
@@ -313,7 +749,7 @@ Layout and export systems should treat it as immutable semantic input.
 
 Routing metadata belongs in:
 
-```text id="jqh4d7"
+```text
 document.layout
 ```
 
@@ -321,7 +757,7 @@ rather than semantic node definitions.
 
 The architecture intentionally separates:
 
-```text id="m9iycw"
+```text
 semantic state
 vs
 layout state
@@ -343,32 +779,27 @@ All routing and layout contributions should include:
 
 Routing fixes should include:
 
-```text id="i53nfr"
+```text
 input
 → expected diagnostics
 → expected hard-validation state
 ```
 
-rather than relying solely on screenshot comparison.
+rather than relying only on screenshot comparison.
 
 ---
 
-# XML Export Rules
+# Known Limits
 
-The exporter should remain:
-
-* deterministic
-* human-readable
-* stable under formatting changes
-
-Avoid:
-
-* compressed draw.io blobs
-* unnecessary XML mutations
-* exporter-side rerouting
-* hidden geometry rewriting
-
-Routing ownership belongs to the routing engine, not the exporter.
+* No compressed `.drawio` export
+* No `<mxfile>` wrapper
+* No free-form shape editing
+* No continuous global optimizer
+* SVG export is preview-only
+* draw.io editor embedding is intentionally out of scope
+* standalone Python output is behaviorally compatible, not byte-identical
+* no generalized code knowledge graph yet
+* Mermaid is currently the only production-supported structured input
 
 ---
 
@@ -386,9 +817,9 @@ Planned future work includes:
 * LLM-assisted semantic enrichment
 * architecture rule validation
 
-The long-term architecture target is:
+Long-term target architecture:
 
-```text id="wv0l0d"
+```text
 codebase
 → semantic graph
 → architecture model
@@ -396,4 +827,24 @@ codebase
 → editable visual workspace
 ```
 
-while preserving deterministic export behavior and stable routing semantics.
+while preserving deterministic routing behavior and stable export semantics.
+
+---
+
+# Output Philosophy
+
+AutoDiagram prioritizes:
+
+```text
+Readable UML
+over
+minimum edge length
+
+Deterministic routing
+over
+aggressive auto-layout mutation
+
+Semantic preservation
+over
+visual post-processing
+```
