@@ -13,7 +13,7 @@ import {
 const classBlockStartPattern = /^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{\s*$/;
 const classDeclarationPattern = /^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/;
 const inlineStereotypePattern = /^<<([^>]+)>>\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/;
-const relationshipPattern = /^([A-Za-z_][A-Za-z0-9_]*)\s+(<\|\.\.|<\|--|\.\.\|>|--\|>|-->|o--|\*--|<--|<\.\.|--o|--\*|\.\.>|--|\.\.)\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(.+))?$/;
+const relationshipPattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\s+"([^"]*)")?\s+(<\|\.\.|<\|--|\.\.\|>|--\|>|-->|o--|\*--|<--|<\.\.|--o|--\*|\.\.>|--|\.\.)\s+(?:"([^"]*)"\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(.+))?$/;
 
 export function parseMermaidClassDiagram(source: string): DiagramDocument {
   const nodes = new Map<string, DiagramNode>();
@@ -98,7 +98,7 @@ export function parseMermaidClassDiagram(source: string): DiagramDocument {
 
     const relationshipMatch = line.match(relationshipPattern);
     if (relationshipMatch) {
-      const [, sourceId, operator, targetId, label] = relationshipMatch;
+      const [, sourceId, sourceMultiplicity, operator, targetMultiplicity, targetId, label] = relationshipMatch;
       ensureNode(sourceId);
       ensureNode(targetId);
       const typedOperator = operator as RelationshipOperator;
@@ -108,6 +108,8 @@ export function parseMermaidClassDiagram(source: string): DiagramDocument {
         targetId,
         operator: typedOperator,
         kind: relationshipKindFromOperator(typedOperator),
+        sourceMultiplicity: normalizeQuotedRelationshipLabel(sourceMultiplicity),
+        targetMultiplicity: normalizeQuotedRelationshipLabel(targetMultiplicity),
         label: label ? normalizeGenericMarkers(label.trim()) : undefined
       });
       return;
@@ -196,6 +198,11 @@ function parseVisibility(value: string): Visibility | undefined {
 function parseMemberName(value: string): string {
   const match = value.match(/^([A-Za-z_][A-Za-z0-9_]*)/);
   return match ? match[1] : value.split(/\s+/)[0] ?? value;
+}
+
+function normalizeQuotedRelationshipLabel(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalizeGenericMarkers(normalized) : undefined;
 }
 
 function normalizeGenericMarkers(value: string): string {

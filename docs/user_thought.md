@@ -499,8 +499,8 @@ export type DiagramEdge = {
   targetId: string;
   label?: string;
   kind?: EdgeKind;
-  multiplicitySource?: string;
-  multiplicityTarget?: string;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
   waypoints?: DiagramPoint[];
   style?: DiagramStyle;
 };
@@ -1188,8 +1188,10 @@ Decision:
 ```text
 - Mermaid relationship source and target endpoints are preserved exactly as parsed from the input line.
 - The parser records both the broad relationship kind and the concrete Mermaid operator.
+- Quoted endpoint labels such as `ClassA "1" *-- "0..*" ClassB` are parsed as relationship multiplicities, separate from the middle label after `:`.
 - Layout uses sourceId, targetId, and routed anchors from the preserved Mermaid endpoints.
 - Draw.io export decides whether the visual marker belongs on the start or end of the edge from the concrete operator.
+- Draw.io export renders endpoint multiplicities as edge-label child cells near the source and target ends of the final route.
 - Web preview reads start/end marker metadata from mxGraph style instead of assuming one marker side from relationship kind alone.
 - This prevents operators such as --*, --o, --|>, ..|>, <--, and <.. from reversing layout semantics just to render the correct draw.io arrowhead.
 ```

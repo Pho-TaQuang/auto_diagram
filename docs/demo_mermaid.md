@@ -210,13 +210,13 @@ class PageModel {
   +ColumnName string
 }
 
-DmPhuongTienController ..> IDmPhuongTienManager : inject/call
-IDmPhuongTienManager <|.. DmPhuongTienManager : implements
-PageModel <|-- DmPhuongTienPageModel : extends
-DmPhuongTienManager ..> DataAccessAdapterFactory : creates adapter
-DmPhuongTienManager ..> SysdmLoaiLucLuongEntity : query/map options
-DmPhuongTienManager ..> SysdmPhuongTienEntity : CRUD/status/map
-DmPhuongTienManager --* DmPhuongTienModel : use
+DmPhuongTienController "1" ..> "1" IDmPhuongTienManager : inject/call
+IDmPhuongTienManager "1" <|.. "1" DmPhuongTienManager : implements
+PageModel "1" <|-- "1" DmPhuongTienPageModel : extends
+DmPhuongTienManager "1" ..> "1" DataAccessAdapterFactory : creates adapter
+DmPhuongTienManager "1" ..> "*" SysdmLoaiLucLuongEntity : query/map options
+DmPhuongTienManager "1" ..> "*" SysdmPhuongTienEntity : CRUD/status/map
+DmPhuongTienManager "1" --* "*" DmPhuongTienModel : use
 DmPhuongTienManager ..> DmPhuongTienPageModel : use
 DmPhuongTienManager ..> SysQlpaModel_LoaiLucLuongOptionModel : use
 DataAccessAdapterFactory ..> DataAccessAdapter : creates

@@ -94,6 +94,8 @@ type PhysicalConnector = {
   sourceId: string;
   targetId: string;
   label: string;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
   kind: PhysicalConnectorKind;
   markerPolicy: { start: boolean; end: boolean };
   routeOrder: number;
@@ -439,6 +441,7 @@ function buildPhysicalConnectors(
         sourceId: commonNodeId,
         targetId: divider.id,
         label: "",
+        sourceMultiplicity: trunkOwner.sourceMultiplicity,
         kind: "divider-trunk",
         markerPolicy: { start: true, end: false },
         routeOrder: baseOrder,
@@ -454,6 +457,7 @@ function buildPhysicalConnectors(
           sourceId: divider.id,
           targetId: edge.targetId,
           label: edge.label ?? "",
+          targetMultiplicity: edge.targetMultiplicity,
           kind: "divider-spoke",
           markerPolicy: { start: false, end: true },
           routeOrder: baseOrder + spokeIndex + 1,
@@ -473,6 +477,7 @@ function buildPhysicalConnectors(
       sourceId: divider.id,
       targetId: commonNodeId,
       label: "",
+      targetMultiplicity: trunkOwner.targetMultiplicity,
       kind: "divider-trunk",
       markerPolicy: { start: false, end: true },
       routeOrder: baseOrder,
@@ -488,6 +493,7 @@ function buildPhysicalConnectors(
         sourceId: edge.sourceId,
         targetId: divider.id,
         label: edge.label ?? "",
+        sourceMultiplicity: edge.sourceMultiplicity,
         kind: "divider-spoke",
         markerPolicy: { start: true, end: false },
         routeOrder: baseOrder + spokeIndex + 1,
@@ -510,6 +516,8 @@ function buildPhysicalConnectors(
       sourceId: edge.sourceId,
       targetId: edge.targetId,
       label: edge.label ?? "",
+      sourceMultiplicity: edge.sourceMultiplicity,
+      targetMultiplicity: edge.targetMultiplicity,
       kind: "normal",
       markerPolicy: { start: true, end: true },
       routeOrder: connectors.length
@@ -588,7 +596,9 @@ function connectorRoutingEdge(connector: PhysicalConnector): DiagramEdge {
     id: connector.id,
     sourceId: connector.sourceId,
     targetId: connector.targetId,
-    label: connector.label
+    label: connector.label,
+    sourceMultiplicity: connector.sourceMultiplicity,
+    targetMultiplicity: connector.targetMultiplicity
   };
 }
 
@@ -798,6 +808,8 @@ function routedDividerSegmentsByOwner(routedConnectors: RoutedPhysicalConnector[
       sourceId: connector.sourceId,
       targetId: connector.targetId,
       label: connector.label,
+      sourceMultiplicity: connector.sourceMultiplicity,
+      targetMultiplicity: connector.targetMultiplicity,
       sourceAnchor: candidate.sourceAnchor,
       targetAnchor: candidate.targetAnchor,
       waypoints: candidate.waypoints,
@@ -2920,6 +2932,8 @@ function directRoutedSegment(edge: DiagramEdge, strategy: DiagramRoutedEdgeSegme
     sourceId: edge.sourceId,
     targetId: edge.targetId,
     label: edge.label ?? "",
+    sourceMultiplicity: edge.sourceMultiplicity,
+    targetMultiplicity: edge.targetMultiplicity,
     sourceAnchor: edge.layout?.sourceAnchor,
     targetAnchor: edge.layout?.targetAnchor,
     waypoints: edge.layout?.waypoints ?? [],

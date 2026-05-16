@@ -90,6 +90,13 @@ const routingDividerStyle = [
   "autoDiagramRoutingDivider=1"
 ].join(";");
 
+const edgeEndpointLabelStyleBase = [
+  "edgeLabel",
+  "resizable=0",
+  "labelBackgroundColor=none",
+  "fontSize=12"
+];
+
 export type DrawioExportOptions = {
   groupFrames?: boolean;
 };
@@ -106,6 +113,8 @@ type ExportEdgeSpec = {
   sourceId: string;
   targetId: string;
   label: string;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
   sourceAnchor?: DiagramEdgeAnchor;
   targetAnchor?: DiagramEdgeAnchor;
   waypoints: DiagramPoint[];
@@ -274,10 +283,12 @@ function buildEdgeCell(
     throw new Error(`Cannot export edge ${edgeSpec.edge.id}: missing source or target endpoint.`);
   }
 
+  const edgeCellId = `edge_${index}`;
   return [
-    `    <mxCell id="edge_${index}" edge="1" parent="1" source="${source.cellId}" style="${escapeXmlAttribute(edgeStyle(edgeSpec.edge, edgeSpec, edgeSpec.markerPolicy))}" target="${target.cellId}" value="${escapeXmlAttribute(edgeSpec.label)}">`,
+    `    <mxCell id="${edgeCellId}" edge="1" parent="1" source="${source.cellId}" style="${escapeXmlAttribute(edgeStyle(edgeSpec.edge, edgeSpec, edgeSpec.markerPolicy))}" target="${target.cellId}" value="${escapeXmlAttribute(edgeSpec.label)}">`,
     buildEdgeGeometry(edgeSpec, source, target),
-    "    </mxCell>"
+    "    </mxCell>",
+    ...buildEndpointMultiplicityCells(edgeCellId, edgeSpec)
   ].join("\n");
 }
 
@@ -329,6 +340,8 @@ function directExportEdgeSpec(edge: DiagramEdge): ExportEdgeSpec {
     sourceId: edge.sourceId,
     targetId: edge.targetId,
     label: edge.label ?? "",
+    sourceMultiplicity: edge.sourceMultiplicity,
+    targetMultiplicity: edge.targetMultiplicity,
     sourceAnchor: edge.layout?.sourceAnchor,
     targetAnchor: edge.layout?.targetAnchor,
     waypoints: edge.layout?.waypoints ?? [],
@@ -343,6 +356,8 @@ function routedSegmentExportEdgeSpecs(edge: DiagramEdge, segments: DiagramRouted
     sourceId: segment.sourceId,
     targetId: segment.targetId,
     label: segment.label ?? "",
+    sourceMultiplicity: segment.sourceMultiplicity,
+    targetMultiplicity: segment.targetMultiplicity,
     sourceAnchor: segment.sourceAnchor,
     targetAnchor: segment.targetAnchor,
     waypoints: segment.waypoints,
@@ -369,6 +384,7 @@ function fanOutDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEd
       sourceId: firstEdge.sourceId,
       targetId: divider.id,
       label: "",
+      sourceMultiplicity: firstEdge.sourceMultiplicity,
       sourceAnchor,
       targetAnchor: dividerInputAnchor,
       waypoints: [],
@@ -382,6 +398,7 @@ function fanOutDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEd
         sourceId: divider.id,
         targetId: edge.targetId,
         label: edge.label ?? "",
+        targetMultiplicity: edge.targetMultiplicity,
         sourceAnchor: dividerAnchor,
         targetAnchor,
         waypoints: [],
@@ -406,6 +423,7 @@ function fanInDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEdg
         sourceId: edge.sourceId,
         targetId: divider.id,
         label: edge.label ?? "",
+        sourceMultiplicity: edge.sourceMultiplicity,
         sourceAnchor,
         targetAnchor: dividerAnchor,
         waypoints: [],
@@ -418,6 +436,7 @@ function fanInDividerEdgeSpecs(divider: DiagramRoutingDivider, edges: DiagramEdg
       sourceId: divider.id,
       targetId: firstEdge.targetId,
       label: "",
+      targetMultiplicity: firstEdge.targetMultiplicity,
       sourceAnchor: dividerOutputAnchor,
       targetAnchor,
       waypoints: [],
@@ -530,6 +549,91 @@ function simpleSplitWaypoints(
     : [sourcePoint, sourcePort, { x: sourcePort.x, y: targetPort.y }, targetPort, targetPoint];
 
   return compactOrthogonalPoints(points).slice(1, -1);
+}
+
+function buildEndpointMultiplicityCells(parentEdgeId: string, edgeSpec: ExportEdgeSpec): string[] {
+  const cells: string[] = [];
+
+  if (edgeSpec.sourceMultiplicity) {
+    cells.push(buildEndpointMultiplicityCell(
+      parentEdgeId,
+      "source",
+      edgeSpec.sourceMultiplicity,
+      edgeSpec.sourceAnchor
+    ));
+  }
+
+  if (edgeSpec.targetMultiplicity) {
+    cells.push(buildEndpointMultiplicityCell(
+      parentEdgeId,
+      "target",
+      edgeSpec.targetMultiplicity,
+      edgeSpec.targetAnchor
+    ));
+  }
+
+  return cells;
+}
+
+function buildEndpointMultiplicityCell(
+  parentEdgeId: string,
+  endpoint: "source" | "target",
+  value: string,
+  anchor: DiagramEdgeAnchor | undefined
+): string {
+  const id = `${parentEdgeId}_${endpoint}_multiplicity`;
+  const relativeX = endpoint === "source" ? -1 : 1;
+  const offset = multiplicityOffset(anchor, endpoint);
+
+  return [
+    `    <mxCell id="${id}" parent="${parentEdgeId}" style="${escapeXmlAttribute(edgeEndpointLabelStyle(endpoint, anchor))}" value="${escapeXmlAttribute(value)}" vertex="1">`,
+    `      <mxGeometry relative="1" x="${relativeX}" as="geometry">`,
+    `        <mxPoint x="${formatNumber(offset.x)}" y="${formatNumber(offset.y)}" as="offset" />`,
+    "      </mxGeometry>",
+    "    </mxCell>"
+  ].join("\n");
+}
+
+function edgeEndpointLabelStyle(endpoint: "source" | "target", anchor: DiagramEdgeAnchor | undefined): string {
+  const horizontalSide = anchor?.side === "east" || anchor?.side === "west";
+  const align = horizontalSide
+    ? anchor?.side === "west" ? "right" : "left"
+    : endpoint === "source" ? "left" : "right";
+  const verticalAlign = anchor?.side === "north"
+    ? "bottom"
+    : anchor?.side === "south"
+    ? "top"
+    : endpoint === "source" ? "bottom" : "top";
+
+  return [
+    ...edgeEndpointLabelStyleBase,
+    `align=${align}`,
+    `verticalAlign=${verticalAlign}`
+  ].join(";");
+}
+
+function multiplicityOffset(anchor: DiagramEdgeAnchor | undefined, endpoint: "source" | "target"): DiagramPoint {
+  const nodeGap = 12;
+  const routeGap = 18;
+  const routeSide = endpoint === "source" ? -routeGap : routeGap;
+
+  if (!anchor) {
+    return endpoint === "source" ? { x: -nodeGap, y: -routeGap } : { x: nodeGap, y: routeGap };
+  }
+
+  if (anchor.side === "north") {
+    return { x: routeSide, y: -nodeGap };
+  }
+
+  if (anchor.side === "south") {
+    return { x: routeSide, y: nodeGap };
+  }
+
+  if (anchor.side === "west") {
+    return { x: -nodeGap, y: routeSide };
+  }
+
+  return { x: nodeGap, y: routeSide };
 }
 
 function buildEdgeGeometry(edgeSpec: ExportEdgeSpec, source: ExportEndpoint, target: ExportEndpoint): string {

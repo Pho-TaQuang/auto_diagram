@@ -3416,6 +3416,8 @@ function toLayoutJson(xml: string, layoutView: MxLayoutViewModel): unknown {
       source: edge.sourceId,
       target: edge.targetId,
       kind: edge.kind,
+      sourceMultiplicity: edge.sourceMultiplicity,
+      targetMultiplicity: edge.targetMultiplicity,
       sourceAnchor: edge.sourceAnchor,
       targetAnchor: edge.targetAnchor,
       points: edge.waypoints

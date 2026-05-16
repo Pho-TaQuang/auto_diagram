@@ -18,6 +18,7 @@ export type MxPoint = {
 export type MxGeometry = {
   attributes: Record<string, string>;
   waypoints: MxPoint[];
+  offset?: MxPoint;
 };
 
 export type MxGraphCell = {
@@ -70,6 +71,8 @@ export type MxLayoutEdge = {
   markerStart: MxLayoutEdgeMarker;
   markerEnd: MxLayoutEdgeMarker;
   dashed: boolean;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
   sourceAnchor?: MxAnchor;
   targetAnchor?: MxAnchor;
   waypoints: MxPoint[];
@@ -185,6 +188,7 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
     };
   });
   const classById = new Map(classes.map((classCell) => [classCell.id, classCell]));
+  const endpointLabelsByEdgeId = extractEndpointLabelsByEdgeId(model.cells);
   const dividers = model.cells.filter(isRoutingDividerCell).map((cell): MxLayoutDivider => {
     const geometry = requireGeometry(cell);
     const style = parseStyle(cell.attributes.style ?? "");
@@ -202,6 +206,7 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
   const edges = model.cells.filter((cell) => cell.attributes.edge === "1").map((cell): MxLayoutEdge => {
     const sourceId = resolveClassEndpoint(cell.attributes.source, parentByChildId);
     const targetId = resolveClassEndpoint(cell.attributes.target, parentByChildId);
+    const endpointLabels = endpointLabelsByEdgeId.get(cell.id);
 
     if (!cell.attributes.source || !sourceId || !endpointIds.has(sourceId)) {
       diagnostics.push({
@@ -246,6 +251,8 @@ export function extractLayoutViewModel(model: MxGraphModel): MxLayoutViewModel {
       markerStart: markerFromStyle(style, "start"),
       markerEnd: markerFromStyle(style, "end"),
       dashed: style.get("dashed") === "1",
+      sourceMultiplicity: endpointLabels?.source,
+      targetMultiplicity: endpointLabels?.target,
       sourceAnchor: anchorFromStyle(style, "exit"),
       targetAnchor: anchorFromStyle(style, "entry"),
       waypoints: cell.geometry?.waypoints ?? []
@@ -366,13 +373,23 @@ function parseCell(rawCell: unknown): MxGraphCell {
 function parseGeometry(rawGeometry: Record<string, unknown>): MxGeometry {
   const rawArray = isRecord(rawGeometry.Array) ? rawGeometry.Array : undefined;
   const rawPoints = rawArray ? asArray(rawArray.mxPoint) : [];
+  const rawGeometryPoint = rawGeometry.mxPoint;
+  const rawOffset = isRecord(rawGeometryPoint) && rawGeometryPoint.as === "offset"
+    ? rawGeometryPoint
+    : undefined;
 
   return {
-    attributes: collectAttributes(rawGeometry, ["Array"]),
+    attributes: collectAttributes(rawGeometry, ["Array", "mxPoint"]),
     waypoints: rawPoints.filter(isRecord).map((point) => ({
       x: readNumber(point.x, 0),
       y: readNumber(point.y, 0)
-    }))
+    })),
+    offset: rawOffset
+      ? {
+        x: readNumber(rawOffset.x, 0),
+        y: readNumber(rawOffset.y, 0)
+      }
+      : undefined
   };
 }
 
@@ -389,15 +406,27 @@ function serializeCell(cell: MxGraphCell): string {
 }
 
 function serializeGeometry(geometry: MxGeometry): string {
-  if (geometry.waypoints.length === 0) {
+  if (geometry.waypoints.length === 0 && !geometry.offset) {
     return `      <mxGeometry${serializeAttributes(geometry.attributes)} />`;
+  }
+
+  const childLines: string[] = [];
+
+  if (geometry.waypoints.length > 0) {
+    childLines.push(
+      '        <Array as="points">',
+      ...geometry.waypoints.map((point) => `          <mxPoint x="${formatNumber(point.x)}" y="${formatNumber(point.y)}" />`),
+      "        </Array>"
+    );
+  }
+
+  if (geometry.offset) {
+    childLines.push(`        <mxPoint x="${formatNumber(geometry.offset.x)}" y="${formatNumber(geometry.offset.y)}" as="offset" />`);
   }
 
   return [
     `      <mxGeometry${serializeAttributes(geometry.attributes)}>`,
-    '        <Array as="points">',
-    ...geometry.waypoints.map((point) => `          <mxPoint x="${formatNumber(point.x)}" y="${formatNumber(point.y)}" />`),
-    "        </Array>",
+    ...childLines,
     "      </mxGeometry>"
   ].join("\n");
 }
@@ -454,6 +483,35 @@ function isRoutingDividerCell(cell: MxGraphCell): boolean {
   return cell.attributes.vertex === "1" && cell.attributes.parent === "1" && style.split(";").includes("autoDiagramRoutingDivider=1");
 }
 
+function extractEndpointLabelsByEdgeId(cells: MxGraphCell[]): Map<string, { source?: string; target?: string }> {
+  const labelsByEdgeId = new Map<string, { source?: string; target?: string }>();
+
+  for (const cell of cells) {
+    const parentId = cell.attributes.parent;
+    const style = cell.attributes.style ?? "";
+    const value = cell.attributes.value;
+
+    if (!parentId || cell.attributes.vertex !== "1" || !style.split(";").includes("edgeLabel") || value === undefined || value === "") {
+      continue;
+    }
+
+    const relativeX = readNumber(cell.geometry?.attributes.x, 0);
+    const labels = labelsByEdgeId.get(parentId) ?? {};
+
+    if (relativeX <= -0.5) {
+      labels.source = value;
+    } else if (relativeX >= 0.5) {
+      labels.target = value;
+    } else {
+      continue;
+    }
+
+    labelsByEdgeId.set(parentId, labels);
+  }
+
+  return labelsByEdgeId;
+}
+
 function requireGeometry(cell: MxGraphCell): MxGeometry {
   if (!cell.geometry) {
     throw new Error(`Cell ${cell.id} is missing mxGeometry.`);
@@ -492,7 +550,8 @@ function cloneMxGraphModel(model: MxGraphModel): MxGraphModel {
       geometry: cell.geometry
         ? {
             attributes: { ...cell.geometry.attributes },
-            waypoints: cell.geometry.waypoints.map((point) => ({ ...point }))
+            waypoints: cell.geometry.waypoints.map((point) => ({ ...point })),
+            offset: cell.geometry.offset ? { ...cell.geometry.offset } : undefined
           }
         : undefined
     }))

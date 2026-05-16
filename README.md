@@ -91,6 +91,8 @@ Draw.io export writes routed control points directly under `<Array as="points">`
 
 Relationship endpoints stay in the same left-to-right order as the Mermaid input. Arrowheads, inheritance triangles, and aggregation/composition diamonds are selected during draw.io export from the parsed Mermaid operator, so an operator such as `A --* B` affects the visual marker side without reversing the layout source and target.
 
+Quoted Mermaid endpoint labels such as `ClassA "1" *-- "0..*" ClassB : owns` are parsed as UML multiplicities. Draw.io export renders them as endpoint `edgeLabel` child cells near the source and target ends of the routed connector, while the relationship label after `:` remains the middle edge label.
+
 Dense fan-out and fan-in routes can be rendered through small routing dividers when more than four relationships compete for the same common endpoint and the same remote stereotype group. A divider is a virtual node in the routing connector graph, not a decoration added after routing. For fan-out, each target group is treated as its own cluster; for fan-in, each source group is treated as its own cluster. Dividers are planned before anchor assignment, expand semantic relationships into one physical trunk plus one physical spoke per semantic edge, and those physical connectors participate in route occupancy before ordinary edges are routed. Horizontal remote groups use north/south dividers, vertical remote groups use west/east dividers, and more than two dividers on the same remote group emit a `divider-side-overflow` warning while using deterministic side offsets. Exported draw.io output contains the divider as a small connectable vertex and serializes the engine-owned trunk/spoke `routedSegments` without changing the semantic Mermaid relationships or relying on top-level direct anchors for divider-owned semantic edges.
 
 Group frames are hidden by default. To include them as background visuals:
@@ -147,6 +149,7 @@ MVP 0 supports the subset used by `docs/demo_mermaid.md`:
 - method return types after the method signature
 - relationship operators `--`, `-->`, `<--`, `..`, `..>`, `<..`, `<|..`, `..|>`, `<|--`, `--|>`, `o--`, `--o`, `*--`, and `--*`
 - relationship labels after `:`
+- quoted relationship endpoint multiplicities, for example `ClassA "1" -- "0..*" ClassB : owns`
 
 Relationship endpoints without a matching `class Name` declaration or `class Name { ... }` block are generated as empty class boxes and reported as parser warnings. Add explicit class declarations when those boxes should contain attributes, methods, or stereotypes.
 

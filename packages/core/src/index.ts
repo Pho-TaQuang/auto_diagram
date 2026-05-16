@@ -113,6 +113,8 @@ export type DiagramRoutedEdgeSegment = {
   sourceId: string;
   targetId: string;
   label?: string;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
   sourceAnchor?: DiagramEdgeAnchor;
   targetAnchor?: DiagramEdgeAnchor;
   waypoints: DiagramPoint[];
@@ -231,6 +233,8 @@ export type DiagramEdge = {
   kind: RelationshipKind;
   operator: RelationshipOperator;
   label?: string;
+  sourceMultiplicity?: string;
+  targetMultiplicity?: string;
   layout?: DiagramEdgeLayout;
 };
 
