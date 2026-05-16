@@ -16,11 +16,13 @@ import {
 import {
   applyStereotypeGridLayout,
   createStereotypeLayoutIntent,
-  normalizeStereotypeLayoutIntent
+  normalizeStereotypeLayoutIntent,
+  createDefaultLayoutEngineRegistry
 } from "../../../packages/layout/src/index.js";
 import type {
   StereotypeLayoutIntent,
-  StereotypeLayoutIntentGroup
+  StereotypeLayoutIntentGroup,
+  LayoutEngineId
 } from "../../../packages/layout/src/index.js";
 import { parseMermaidClassDiagram } from "../../../packages/parsers/src/index.js";
 
@@ -31,7 +33,8 @@ export type {
 
 export type RunWebPipelineOptions = {
   source: string;
-  intent?: StereotypeLayoutIntent;
+  engineId?: LayoutEngineId;
+  intent?: StereotypeLayoutIntent | any;
   groupFrames?: boolean;
 };
 
@@ -60,9 +63,26 @@ export function runWebPipeline(options: RunWebPipelineOptions): WebPipelineResul
     throw new Error("No class nodes were parsed from the input.");
   }
 
-  const intent = options.intent ? normalizeStereotypeLayoutIntent(options.intent) : undefined;
-  const diagram = applyStereotypeGridLayout(parsed, intent ? { intent } : undefined);
-  const activeIntent = intent ?? createIntentFromSelectedLayout(diagram);
+  const engineId = options.engineId ?? "auto-arrange-v2";
+  const registry = createDefaultLayoutEngineRegistry();
+  const engine = registry.get(engineId);
+  if (!engine) {
+    throw new Error(`Layout engine ${engineId} not found`);
+  }
+
+  let intentInput = options.intent;
+  if (intentInput && engineId === "stereotype-scored") {
+    intentInput = normalizeStereotypeLayoutIntent(intentInput);
+  }
+
+  const engineResult = engine.run({
+    document: parsed,
+    mode: engineId,
+    layoutInput: intentInput
+  });
+
+  const diagram = engineResult.document;
+  const activeIntent = (engineId === "stereotype-scored" ? intentInput : undefined) ?? createIntentFromSelectedLayout(diagram);
   const xml = toMxGraphModelXml(diagram, { groupFrames: options.groupFrames ?? false });
   const mxGraph = parseMxGraphModelXml(xml);
   const layoutView = extractLayoutViewModel(mxGraph);

@@ -49,6 +49,7 @@ import {
   type StereotypeLayoutIntent,
   type WebPipelineResult
 } from "./pipeline.js";
+import type { LayoutEngineId } from "../../../packages/layout/src/index.js";
 
 type SourceMode = "mermaid" | "mxGraphXml" | "layoutJson";
 type LeftTab = "classes" | "edges" | "groups" | "extends" | "layoutJson";
@@ -104,6 +105,7 @@ const sourceModeLabels: Record<SourceMode, string> = {
 export function App(): React.JSX.Element {
   const [sourceMode, setSourceMode] = useState<SourceMode>("mermaid");
   const [source, setSource] = useState(demoSource);
+  const [engineId, setEngineId] = useState<LayoutEngineId>("auto-arrange-v2");
   const [intentOverride, setIntentOverride] = useState<StereotypeLayoutIntent | undefined>();
   const [groupFrames, setGroupFrames] = useState(false);
   const [mxGraphState, setMxGraphState] = useState<MxGraphModel | undefined>();
@@ -134,8 +136,8 @@ export function App(): React.JSX.Element {
   }, [isDark]);
 
   const mermaidPipelineKey = useMemo(
-    () => mermaidLayoutKey(source, intentOverride, groupFrames),
-    [groupFrames, intentOverride, source]
+    () => mermaidLayoutKey(source, intentOverride, groupFrames) + `:${engineId}`,
+    [groupFrames, intentOverride, source, engineId]
   );
 
   const activeState = useMemo<ActiveState>(() => {
@@ -261,6 +263,7 @@ export function App(): React.JSX.Element {
     const requestSource = source;
     const requestIntent = intentOverride ? cloneLayoutIntent(intentOverride) : undefined;
     const requestGroupFrames = groupFrames;
+    const requestEngineId = engineId;
     const previousSummary = layoutSummaryFromState(generatedPipeline?.state);
     let timeoutId: number | undefined;
     let frameId: number | undefined;
@@ -287,6 +290,7 @@ export function App(): React.JSX.Element {
         try {
           const nextResult = runWebPipeline({
             source: requestSource,
+            engineId: requestEngineId,
             intent: requestIntent,
             groupFrames: requestGroupFrames
           });
@@ -600,6 +604,17 @@ export function App(): React.JSX.Element {
             <Redo2 size={14} />
           </button>
           <span className="toolbar-divider" />
+          <select 
+            className="toolbar-select"
+            value={engineId}
+            onChange={(e) => setEngineId(e.target.value as LayoutEngineId)}
+            title="Layout Engine"
+          >
+            <option value="auto-arrange-v2">Auto Arrange V2</option>
+            <option value="suggest-initial-v2">Suggest Initial V2</option>
+            <option value="manual-routing-v2">Manual Routing V2</option>
+            <option value="stereotype-scored">Stereotype Scored</option>
+          </select>
           <button type="button" className="toolbar-btn" onClick={runAutoLayout} disabled={!activeGraph} title="Auto Layout">
             <Grid3X3 size={14} />
           </button>
@@ -714,24 +729,26 @@ export function App(): React.JSX.Element {
                 diagnostics={diagnostics}
                 onClassChange={(id, patch) => mutateGraph((graph) => updateCellGeometry(graph, id, patch), "Class geometry updated")}
               />
-              <LayoutIntentPanel
-                intent={activeState.intent}
-                hasUserPreset={Boolean(intentOverride)}
-                layoutView={layoutView}
-                groupFrames={groupFrames}
-                onGroupFramesChange={(enabled) => {
-                  setGroupFrames(enabled);
-                }}
-                onResetIntent={() => commitIntentOverride(undefined, "Layout intent reset")}
-                onIntentChange={(nextIntent, options) => {
-                  if (options?.history === false) {
-                    applyIntentOverride(nextIntent, options.status ?? "Layout matrix initialized");
-                    return;
-                  }
+              {engineId === "stereotype-scored" && (
+                <LayoutIntentPanel
+                  intent={activeState.intent}
+                  hasUserPreset={Boolean(intentOverride)}
+                  layoutView={layoutView}
+                  groupFrames={groupFrames}
+                  onGroupFramesChange={(enabled) => {
+                    setGroupFrames(enabled);
+                  }}
+                  onResetIntent={() => commitIntentOverride(undefined, "Layout intent reset")}
+                  onIntentChange={(nextIntent, options) => {
+                    if (options?.history === false) {
+                      applyIntentOverride(nextIntent, options.status ?? "Layout matrix initialized");
+                      return;
+                    }
 
-                  commitIntentOverride(nextIntent, options?.status ?? "Layout intent updated");
-                }}
-              />
+                    commitIntentOverride(nextIntent, options?.status ?? "Layout intent updated");
+                  }}
+                />
+              )}
               <XmlPanel xml={activeXml} />
             </>
           ) : (
