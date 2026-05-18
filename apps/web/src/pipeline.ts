@@ -3,7 +3,6 @@ import {
   extractLayoutViewModel,
   parseMxGraphModelXml,
   serializeMxGraphModel,
-  toMxGraphModelXml,
   type MxAnchor,
   type MxGraphModel,
   type MxLayoutClass,
@@ -13,34 +12,31 @@ import {
   type MxPoint,
   type MxLayoutViewModel
 } from "../../../packages/drawio/src/index.js";
-import {
-  applyStereotypeGridLayout,
-  createStereotypeLayoutIntent,
-  normalizeStereotypeLayoutIntent,
-  createDefaultLayoutEngineRegistry
-} from "../../../packages/layout/src/index.js";
 import type {
   StereotypeLayoutIntent,
-  StereotypeLayoutIntentGroup,
+  CoordinateRoutingLayoutV3,
   LayoutEngineId
 } from "../../../packages/layout/src/index.js";
 import { parseMermaidClassDiagram } from "../../../packages/parsers/src/index.js";
+import { getLayoutAdapter, LegacyDrawioGenerator } from "./adapters/index.js";
 
 export type {
   StereotypeLayoutIntent,
   StereotypeLayoutIntentGroup
 } from "../../../packages/layout/src/index.js";
 
+export type WebLayoutIntent = StereotypeLayoutIntent | CoordinateRoutingLayoutV3;
+
 export type RunWebPipelineOptions = {
   source: string;
   engineId?: LayoutEngineId;
-  intent?: StereotypeLayoutIntent | any;
+  intent?: WebLayoutIntent;
   groupFrames?: boolean;
 };
 
 export type WebPipelineResult = {
   parsed: DiagramDocument;
-  intent: StereotypeLayoutIntent;
+  intent: WebLayoutIntent;
   diagram: DiagramDocument;
   mxGraph: MxGraphModel;
   layoutView: MxLayoutViewModel;
@@ -64,82 +60,86 @@ export function runWebPipeline(options: RunWebPipelineOptions): WebPipelineResul
   }
 
   const engineId = options.engineId ?? "auto-arrange-v2";
-  const registry = createDefaultLayoutEngineRegistry();
-  const engine = registry.get(engineId);
-  if (!engine) {
-    throw new Error(`Layout engine ${engineId} not found`);
-  }
+  const adapter = getLayoutAdapter(engineId);
 
-  let intentInput = options.intent;
-  if (intentInput && engineId === "stereotype-scored") {
-    intentInput = normalizeStereotypeLayoutIntent(intentInput);
-  }
+  // Run layout via the adapter
+  const diagram = adapter.runLayout(parsed, options.intent as any, options.groupFrames ?? false);
 
-  const engineResult = engine.run({
-    document: parsed,
-    mode: engineId,
-    layoutInput: intentInput
-  });
+  // Generate draw.io via LegacyDrawioGenerator
+  const drawioResult = LegacyDrawioGenerator.generate(diagram, { groupFrames: options.groupFrames ?? false });
 
-  const diagram = engineResult.document;
-  const activeIntent = (engineId === "stereotype-scored" ? intentInput : undefined) ?? createIntentFromSelectedLayout(diagram);
-  const xml = toMxGraphModelXml(diagram, { groupFrames: options.groupFrames ?? false });
-  const mxGraph = parseMxGraphModelXml(xml);
-  const layoutView = extractLayoutViewModel(mxGraph);
+  // In Web UI we keep user-authored layout intent fields that cannot be recovered
+  // from the routed DiagramDocument, such as CoordinateRoutingLayoutV3 layers.
+  const extractedIntent = adapter.extractIntent ? adapter.extractIntent(diagram) : (options.intent ?? adapter.createInitialIntent(parsed));
+  const activeIntent = mergeWebLayoutIntent(options.intent, extractedIntent);
 
   return {
     parsed,
     intent: activeIntent,
     diagram,
-    mxGraph,
-    layoutView,
-    xml
+    mxGraph: drawioResult.mxGraph,
+    layoutView: drawioResult.layoutView,
+    xml: drawioResult.xml
   };
 }
 
-export function readWebPipelineMetadata(options: Pick<RunWebPipelineOptions, "source" | "intent">): WebPipelineMetadata {
+export function readWebPipelineMetadata(options: Pick<RunWebPipelineOptions, "source" | "intent" | "engineId">): WebPipelineMetadata {
   const parsed = parseMermaidClassDiagram(options.source);
 
   if (parsed.nodes.length === 0) {
     throw new Error("No class nodes were parsed from the input.");
   }
 
+  const engineId = options.engineId ?? "auto-arrange-v2";
+  const adapter = getLayoutAdapter(engineId);
+
   return {
     parsed,
-    intent: options.intent
-      ? normalizeStereotypeLayoutIntent(options.intent)
-      : createStereotypeLayoutIntent(parsed)
+    intent: options.intent ?? adapter.createInitialIntent(parsed)
   };
 }
 
-function createIntentFromSelectedLayout(diagram: DiagramDocument): StereotypeLayoutIntent {
-  const groups = diagram.groups;
-
-  if (!groups || groups.some((group) => !group.layoutIntent)) {
-    return createStereotypeLayoutIntent(diagram);
+function mergeWebLayoutIntent(requestIntent: WebLayoutIntent | undefined, extractedIntent: WebLayoutIntent): WebLayoutIntent {
+  if (!isCoordinateRoutingIntent(requestIntent) || !isCoordinateRoutingIntent(extractedIntent)) {
+    return extractedIntent;
   }
 
-  const columns = diagram.layout?.grid?.columns ?? Math.max(1, ...groups.map((group) => group.layoutIntent!.gridX + group.layoutIntent!.gridWidth));
-  const rows = diagram.layout?.grid?.rows ?? Math.max(1, ...groups.map((group) => group.layoutIntent!.gridY + group.layoutIntent!.gridHeight));
-
+  const requestedGroups = new Map(requestIntent.groups.map((group) => [group.id, group]));
   return {
-    version: 1,
-    grid: {
-      columns,
-      rows
-    },
-    groups: groups.map((group): StereotypeLayoutIntentGroup => ({
-      id: group.id,
-      label: group.label,
-      kind: group.kind,
-      gridX: group.layoutIntent!.gridX,
-      gridY: group.layoutIntent!.gridY,
-      gridWidth: group.layoutIntent!.gridWidth,
-      gridHeight: group.layoutIntent!.gridHeight,
-      packing: group.layoutIntent!.packing,
-      nodeIds: [...group.nodeIds]
-    }))
+    ...extractedIntent,
+    ...(requestIntent.layers !== undefined ? { layers: cloneJson(requestIntent.layers) } : {}),
+    ...(requestIntent.routing !== undefined ? { routing: cloneJson(requestIntent.routing) } : {}),
+    groups: extractedIntent.groups.map((group) => {
+      const requested = requestedGroups.get(group.id);
+      if (!requested) {
+        return group;
+      }
+
+      return {
+        ...group,
+        packing: requested.packing,
+        nodeOrder: [...requested.nodeOrder],
+        ...(requested.nodes !== undefined ? { nodes: cloneJson(requested.nodes) } : {}),
+        ...(requested.locked !== undefined ? { locked: requested.locked } : {}),
+        ...(requested.packingLocked !== undefined ? { packingLocked: requested.packingLocked } : {}),
+        ...(requested.nodeOrderLocked !== undefined ? { nodeOrderLocked: requested.nodeOrderLocked } : {})
+      };
+    })
   };
+}
+
+function isCoordinateRoutingIntent(intent: unknown): intent is CoordinateRoutingLayoutV3 {
+  return typeof intent === "object" &&
+    intent !== null &&
+    "version" in intent &&
+    (intent as { version?: unknown }).version === 3 &&
+    "layoutMode" in intent &&
+    (intent as { layoutMode?: unknown }).layoutMode === "coordinate-routing" &&
+    Array.isArray((intent as { groups?: unknown }).groups);
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 export function runMxGraphImport(xml: string): MxGraphImportResult {
@@ -566,13 +566,6 @@ function samePoint(left: MxPoint, right: MxPoint): boolean {
   return Math.abs(left.x - right.x) < 0.001 && Math.abs(left.y - right.y) < 0.001;
 }
 
-export function cloneLayoutIntent(intent: StereotypeLayoutIntent): StereotypeLayoutIntent {
-  return {
-    version: intent.version,
-    grid: { ...intent.grid },
-    groups: intent.groups.map((group): StereotypeLayoutIntentGroup => ({
-      ...group,
-      nodeIds: [...group.nodeIds]
-    }))
-  };
+export function cloneLayoutIntent(intent: any, engineId: string = "stereotype-scored"): any {
+  return getLayoutAdapter(engineId).cloneIntent(intent);
 }

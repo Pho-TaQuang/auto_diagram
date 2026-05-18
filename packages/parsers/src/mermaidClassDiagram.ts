@@ -140,7 +140,7 @@ export function parseMermaidClassDiagram(source: string): DiagramDocument {
     if (!declaredNodeIds.has(node.id)) {
       diagnostics.push({
         severity: "warning",
-        message: `Class ${node.id} is referenced by a relationship but has no class declaration or stereotype; generated as an empty class in the Ungrouped layout group.`
+        message: `Class ${node.id} is referenced by a relationship but has no class declaration or stereotype; generated as an empty class without stereotype metadata.`
       });
     }
   }

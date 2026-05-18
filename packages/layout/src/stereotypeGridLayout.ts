@@ -38,7 +38,6 @@ const suggestedGroupPositions = new Map<string, DiagramPoint>([
   ["DTO", { x: 1, y: 2 }]
 ]);
 const suggestedFallbackStartRow = 3;
-const syntheticUngroupedLabel = "Ungrouped";
 const defaultGroupColumns = 3;
 const pageMarginX = 40;
 const pageMarginY = 40;
@@ -460,8 +459,8 @@ function buildExactStereotypeGroups(nodes: DiagramNode[], columns: number): Diag
   for (const node of nodes) {
     const exactStereotype = node.stereotype && node.stereotype.length > 0 ? node.stereotype : undefined;
     const kind = exactStereotype ? "stereotype" : "synthetic";
-    const label = exactStereotype ?? syntheticUngroupedLabel;
-    const groupKey = `${kind}:${label}`;
+    const label = exactStereotype ?? node.label;
+    const groupKey = exactStereotype ? `${kind}:${label}` : `${kind}:${node.id}`;
     let group = groupsByKey.get(groupKey);
 
     if (!group) {

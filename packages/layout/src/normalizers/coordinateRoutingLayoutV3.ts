@@ -2,7 +2,8 @@ import type {
   DiagramDocument,
   DiagramGroupKind,
   DiagramGroupPacking,
-  DiagramGroupPackingV2
+  DiagramGroupPackingV2,
+  DiagramNode
 } from "../../../core/src/index.js";
 import type { LayoutRunContext } from "../engine/LayoutEngine.js";
 import type { LayoutLogEvent, LayoutSourceFormat } from "../engine/LayoutRunReport.js";
@@ -23,7 +24,14 @@ export type CoordinateRoutingLayoutV3 = {
   version: 3;
   layoutMode: "coordinate-routing";
   groups: CoordinateRoutingLayoutGroupV3[];
+  layers?: CoordinateRoutingLayoutLayerV3[];
   routing?: CoordinateRoutingOptions;
+};
+
+export type CoordinateRoutingLayoutLayerV3 = {
+  id: string;
+  label?: string;
+  groupIds: string[];
 };
 
 export type CoordinateRoutingLayoutGroupV3 = {
@@ -47,6 +55,13 @@ export type CoordinateRoutingOptions = {
   maxRepairPasses?: number;
 };
 
+export type CoordinateRoutingLayerLayoutOptions = {
+  groupGapX?: number;
+  layerGapY?: number;
+  paddingX?: number;
+  paddingY?: number;
+};
+
 export type NormalizedGroupIntent = CoordinateRoutingLayoutGroupV3 & {
   kind: DiagramGroupKind;
 };
@@ -60,6 +75,16 @@ export type NormalizedCoordinateRoutingIntent = {
 
 const defaultCellWidth = 360;
 const defaultCellHeight = 280;
+const groupPadding = 32;
+const nodeGapX = 80;
+const nodeGapY = 80;
+
+export const coordinateRoutingLayerLayoutDefaults = {
+  groupGapX: 240,
+  layerGapY: 240,
+  paddingX: 32,
+  paddingY: 32
+} as const;
 
 export const coordinateRoutingV3Normalizer: LayoutInputNormalizer = {
   canNormalize(input: unknown): boolean {
@@ -148,6 +173,48 @@ export function createInitialCoordinateRoutingLayoutV3(
   return stereotypeGridIntentToCoordinateRouting(intent, document);
 }
 
+export function extractCoordinateRoutingLayoutV3FromDocument(document: DiagramDocument): CoordinateRoutingLayoutV3 {
+  const nodesById = new Map(document.nodes.map((node) => [node.id, node]));
+
+  return {
+    version: 3,
+    layoutMode: "coordinate-routing",
+    groups: (document.groups ?? [])
+      .map((group): CoordinateRoutingLayoutGroupV3 => {
+      return {
+        id: group.id,
+        label: group.label,
+        x: group.layout?.x ?? 0,
+        y: group.layout?.y ?? 0,
+        width: group.layout?.width,
+        height: group.layout?.height,
+        packing: inferGroupPacking(group.nodeIds.map((nodeId) => nodesById.get(nodeId)).filter((node): node is DiagramNode => Boolean(node))),
+        nodeOrder: group.nodeIds,
+        nodes: group.nodeIds.reduce((acc, nodeId) => {
+          const node = nodesById.get(nodeId);
+          if (node?.layout) {
+            acc[nodeId] = { width: node.layout.width, height: node.layout.height };
+          }
+          return acc;
+        }, {} as Record<string, { width: number; height: number }>)
+      };
+    })
+  };
+}
+
+function inferGroupPacking(nodes: DiagramNode[]): DiagramGroupPackingV2 {
+  if (nodes.length < 2 || nodes.some((node) => !node.layout)) {
+    return "vertical";
+  }
+
+  const xValues = nodes.map((node) => node.layout!.x);
+  const yValues = nodes.map((node) => node.layout!.y);
+  const xSpread = Math.max(...xValues) - Math.min(...xValues);
+  const ySpread = Math.max(...yValues) - Math.min(...yValues);
+
+  return xSpread > ySpread ? "horizontal" : "vertical";
+}
+
 export function normalizeCoordinateRoutingIntent(
   intent: CoordinateRoutingLayoutV3,
   options: Required<CoordinateRoutingOptions>
@@ -163,6 +230,135 @@ export function normalizeCoordinateRoutingIntent(
       } satisfies NormalizedGroupIntent
     ])),
     routing: options
+  };
+}
+
+export function applyCoordinateRoutingLayerLayout(
+  intent: CoordinateRoutingLayoutV3,
+  document: DiagramDocument,
+  options: CoordinateRoutingLayerLayoutOptions = {}
+): CoordinateRoutingLayoutV3 {
+  if (!intent.layers) {
+    return intent;
+  }
+
+  const config = {
+    ...coordinateRoutingLayerLayoutDefaults,
+    ...options
+  };
+  const groupsById = new Map(intent.groups.map((group) => [group.id, group]));
+  const assignedGroupIds = new Set<string>();
+  const layers: CoordinateRoutingLayoutLayerV3[] = [];
+
+  for (const layer of intent.layers) {
+    const groupIds: string[] = [];
+    for (const groupId of layer.groupIds) {
+      if (!groupsById.has(groupId) || assignedGroupIds.has(groupId)) {
+        continue;
+      }
+      assignedGroupIds.add(groupId);
+      groupIds.push(groupId);
+    }
+
+    if (groupIds.length > 0) {
+      layers.push({
+        id: layer.id,
+        ...(layer.label !== undefined ? { label: layer.label } : {}),
+        groupIds
+      });
+    }
+  }
+
+  const missingGroupIds = intent.groups
+    .map((group) => group.id)
+    .filter((groupId) => !assignedGroupIds.has(groupId));
+  if (missingGroupIds.length > 0) {
+    layers.push({
+      id: nextCoordinateRoutingLayerId(layers, "layer_generated_unassigned"),
+      label: "Unassigned",
+      groupIds: missingGroupIds
+    });
+  }
+
+  const measuredGroups = new Map<string, { width: number; height: number }>();
+  for (const group of intent.groups) {
+    measuredGroups.set(group.id, measureCoordinateRoutingGroup(group, document));
+  }
+
+  const layerMetrics = layers.map((layer) => {
+    const sizes = layer.groupIds.map((groupId) => measuredGroups.get(groupId) ?? { width: 0, height: 0 });
+    return {
+      layer,
+      width: sizes.reduce((total, size) => total + size.width, 0) + Math.max(0, sizes.length - 1) * config.groupGapX,
+      height: sizes.reduce((height, size) => Math.max(height, size.height), 0)
+    };
+  });
+  const widestLayer = layerMetrics.reduce((width, metric) => Math.max(width, metric.width), 0);
+  const placedGroups = new Map<string, CoordinateRoutingLayoutGroupV3>();
+  let y = config.paddingY;
+
+  for (const metric of layerMetrics) {
+    let x = config.paddingX + (widestLayer - metric.width) / 2;
+    for (const groupId of metric.layer.groupIds) {
+      const group = groupsById.get(groupId);
+      if (!group) {
+        continue;
+      }
+      const size = measuredGroups.get(groupId) ?? measureCoordinateRoutingGroup(group, document);
+      placedGroups.set(groupId, {
+        ...group,
+        x,
+        y,
+        width: size.width,
+        height: size.height
+      });
+      x += size.width + config.groupGapX;
+    }
+    y += metric.height + config.layerGapY;
+  }
+
+  return {
+    ...intent,
+    layers,
+    groups: intent.groups.map((group) => placedGroups.get(group.id) ?? group)
+  };
+}
+
+export function measureCoordinateRoutingGroup(
+  group: CoordinateRoutingLayoutGroupV3,
+  document: DiagramDocument
+): { width: number; height: number } {
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
+  const dimensions = group.nodeOrder
+    .map((nodeId) => {
+      const persisted = group.nodes?.[nodeId];
+      if (persisted && Number.isFinite(persisted.width) && Number.isFinite(persisted.height)) {
+        return persisted;
+      }
+      const node = nodeById.get(nodeId);
+      return node ? estimateClassNodeLayout(node) : undefined;
+    })
+    .filter((dimension): dimension is { width: number; height: number } => Boolean(dimension));
+
+  if (dimensions.length === 0) {
+    return { width: groupPadding * 2, height: groupPadding * 2 };
+  }
+
+  const maxWidth = Math.max(...dimensions.map((dimension) => dimension.width));
+  const maxHeight = Math.max(...dimensions.map((dimension) => dimension.height));
+  const sumWidth = dimensions.reduce((total, dimension) => total + dimension.width, 0);
+  const sumHeight = dimensions.reduce((total, dimension) => total + dimension.height, 0);
+
+  if (group.packing === "horizontal") {
+    return {
+      width: sumWidth + nodeGapX * (dimensions.length - 1) + groupPadding * 2,
+      height: maxHeight + groupPadding * 2
+    };
+  }
+
+  return {
+    width: maxWidth + groupPadding * 2,
+    height: sumHeight + nodeGapY * (dimensions.length - 1) + groupPadding * 2
   };
 }
 
@@ -232,16 +428,13 @@ function stereotypeGridIntentToCoordinateRouting(
           }
         }
 
-        const groupPadding = 32;
         if (validNodeCount === 0) {
           width = groupPadding * 2;
           height = groupPadding * 2;
         } else if (packing === "horizontal") {
-          const nodeGapX = 80;
           width = sumWidth + nodeGapX * (validNodeCount - 1) + groupPadding * 2;
           height = maxHeight + groupPadding * 2;
         } else {
-          const nodeGapY = 80;
           width = maxWidth + groupPadding * 2;
           height = sumHeight + nodeGapY * (validNodeCount - 1) + groupPadding * 2;
         }
@@ -351,16 +544,142 @@ function normalizeCoordinateRoutingLayoutInput(
     baseGroup.nodeIds.forEach((nodeId) => assignedNodeIds.add(nodeId));
   }
 
+  const routing = normalizeRoutingOptions(input.routing);
+  const rawLayers = input.layers === undefined ? undefined : normalizeRawCoordinateLayers(input.layers);
+  const normalizedLayers = rawLayers === undefined
+    ? undefined
+    : normalizeCoordinateRoutingLayers(rawLayers, outputGroups, context, warnings);
+  const normalizedIntent: CoordinateRoutingLayoutV3 = {
+    version: 3,
+    layoutMode: "coordinate-routing",
+    groups: outputGroups,
+    ...(normalizedLayers !== undefined ? { layers: normalizedLayers } : {}),
+    routing
+  };
+  const intent = normalizedLayers === undefined
+    ? normalizedIntent
+    : applyCoordinateRoutingLayerLayout(normalizedIntent, document);
+
   return {
     intent: {
-      version: 3,
-      layoutMode: "coordinate-routing",
-      groups: outputGroups,
-      routing: normalizeRoutingOptions(input.routing)
+      ...intent,
+      routing
     },
     sourceFormat,
     warnings
   };
+}
+
+function normalizeRawCoordinateLayers(value: unknown): CoordinateRoutingLayoutLayerV3[] {
+  if (!Array.isArray(value)) {
+    throw new Error("layers must be an array when provided.");
+  }
+
+  const layers: CoordinateRoutingLayoutLayerV3[] = [];
+  const seenLayerIds = new Set<string>();
+  for (let index = 0; index < value.length; index += 1) {
+    const rawLayer = value[index];
+    if (!isRecord(rawLayer)) {
+      throw new Error(`layers[${index}] must be an object.`);
+    }
+    const id = requireString(rawLayer.id, `layers[${index}].id`);
+    if (seenLayerIds.has(id)) {
+      throw new Error(`Coordinate routing layout defines duplicate layer id: ${id}`);
+    }
+    seenLayerIds.add(id);
+
+    if (!Array.isArray(rawLayer.groupIds)) {
+      throw new Error(`layers[${index}].groupIds must be an array.`);
+    }
+
+    layers.push({
+      id,
+      ...(rawLayer.label === undefined ? {} : { label: requireString(rawLayer.label, `layers[${index}].label`) }),
+      groupIds: rawLayer.groupIds.map((groupId, groupIndex) => requireString(groupId, `layers[${index}].groupIds[${groupIndex}]`))
+    });
+  }
+  return layers;
+}
+
+function normalizeCoordinateRoutingLayers(
+  layers: CoordinateRoutingLayoutLayerV3[],
+  groups: CoordinateRoutingLayoutGroupV3[],
+  context: LayoutRunContext,
+  warnings: LayoutLogEvent[]
+): CoordinateRoutingLayoutLayerV3[] {
+  const groupIds = new Set(groups.map((group) => group.id));
+  const assignedGroupIds = new Set<string>();
+  const normalizedLayers: CoordinateRoutingLayoutLayerV3[] = [];
+
+  for (const layer of layers) {
+    const validGroupIds: string[] = [];
+    for (const groupId of layer.groupIds) {
+      if (!groupIds.has(groupId)) {
+        warn(context, warnings, {
+          phase: "normalize",
+          type: "unknown-layer-group-ignored",
+          message: `Unknown layer group ${groupId} ignored.`,
+          groupId,
+          data: { layerId: layer.id }
+        });
+        continue;
+      }
+
+      if (assignedGroupIds.has(groupId)) {
+        context.logger.error({
+          phase: "normalize",
+          type: "duplicate-layer-group-assignment",
+          message: `Coordinate routing layers assign group ${groupId} more than once.`,
+          groupId,
+          data: { layerId: layer.id }
+        });
+        throw new Error(`Coordinate routing layers assign group ${groupId} more than once.`);
+      }
+
+      assignedGroupIds.add(groupId);
+      validGroupIds.push(groupId);
+    }
+
+    if (validGroupIds.length > 0) {
+      normalizedLayers.push({
+        id: layer.id,
+        ...(layer.label !== undefined ? { label: layer.label } : {}),
+        groupIds: validGroupIds
+      });
+    }
+  }
+
+  const missingGroupIds = groups
+    .map((group) => group.id)
+    .filter((groupId) => !assignedGroupIds.has(groupId));
+  if (missingGroupIds.length > 0) {
+    warn(context, warnings, {
+      phase: "normalize",
+      type: "missing-layer-groups-appended",
+      message: `${missingGroupIds.length} groups were not assigned to layers and were appended to a generated layer.`,
+      data: { groupIds: missingGroupIds }
+    });
+    normalizedLayers.push({
+      id: nextCoordinateRoutingLayerId(normalizedLayers, "layer_generated_unassigned"),
+      label: "Unassigned",
+      groupIds: missingGroupIds
+    });
+  }
+
+  return normalizedLayers;
+}
+
+function nextCoordinateRoutingLayerId(layers: CoordinateRoutingLayoutLayerV3[], baseId: string): string {
+  const usedLayerIds = new Set(layers.map((layer) => layer.id));
+  if (!usedLayerIds.has(baseId)) {
+    return baseId;
+  }
+
+  let index = 2;
+  while (usedLayerIds.has(`${baseId}_${index}`)) {
+    index += 1;
+  }
+  return `${baseId}_${index}`;
 }
 
 function normalizeRawCoordinateGroup(value: unknown, index: number): CoordinateRoutingLayoutGroupV3 {

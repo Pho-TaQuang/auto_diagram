@@ -1,6 +1,6 @@
 classDiagram
 class DmPhuongTienController {
-  <<Controller>>
+
   -_manager IDmPhuongTienManager
   +Paging(DmPhuongTienPageModel pageModel) Task~ApiResponse~
   +InsertOrUpdate(DmPhuongTienModel model) Task~ApiResponse~
@@ -12,7 +12,7 @@ class DmPhuongTienController {
 }
 
 class IDmPhuongTienManager {
-  <<ManagerInterface>>
+
   +Paging(DmPhuongTienPageModel model) Task~ApiResponse~
   +InsertOrUpdate(DmPhuongTienModel model) Task~ApiResponse~
   +Delete(string id) Task~ApiResponse~
@@ -23,7 +23,7 @@ class IDmPhuongTienManager {
 }
 
 class DmPhuongTienManager {
-  <<Manager>>
+
   -_currentContext ICurrentContext
   -_autoMap AutoMap
   +Paging(DmPhuongTienPageModel model) Task~ApiResponse~
@@ -38,7 +38,7 @@ class DmPhuongTienManager {
 }
 
 class DataAccessAdapterFactory {
-  <<AdapterFactory>>
+
   -_configSetting ConfigSetting
   +DataAccessAdapterFactory()
   -CreateAdapter(connectionString string) DataAccessAdapter
@@ -46,7 +46,7 @@ class DataAccessAdapterFactory {
 }
 
 class DataAccessAdapter {
-  <<DataAccessAdapter>>
+
   +ConnectionStringKeyName string
   +DataAccessAdapter()
   +DataAccessAdapter(keepConnectionOpen bool)
@@ -55,7 +55,7 @@ class DataAccessAdapter {
 }
 
 class SysdmLoaiLucLuongEntity {
-  <<LLBLGenEntity>>
+
   +MaLoai String
   +MoTa String
   +TenLoai String
@@ -63,7 +63,7 @@ class SysdmLoaiLucLuongEntity {
 }
 
 class SysdmPhuongTienEntity {
-  <<LLBLGenEntity>>
+
   +BienSo String
   +CameraAccount String
   +CameraIp String
@@ -117,7 +117,7 @@ class SysdmPhuongTienEntity {
 }
 
 class DmPhuongTienModel {
-  <<Model>>
+
   +Id string
   +MaPhuongTien string
   +TenPhuongTien string
@@ -177,7 +177,7 @@ class DmPhuongTienModel {
 }
 
 class DmPhuongTienPageModel {
-  <<DTO>>
+
   +Search string
   +TypePhuongTien string
   +MaPhuongTien string
@@ -190,7 +190,7 @@ class DmPhuongTienPageModel {
 }
 
 class SysQlpaModel_LoaiLucLuongOptionModel {
-  <<Model>>
+
   +Id string
   +MaLoai string
   +TenLoai string
@@ -199,7 +199,6 @@ class SysQlpaModel_LoaiLucLuongOptionModel {
 }
 
 class PageModel {
-  <<DTO>>
   +Search string
   +CurrentPage int
   +PageSize int

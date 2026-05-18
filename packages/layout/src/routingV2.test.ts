@@ -4,6 +4,7 @@ import { parseMermaidClassDiagram } from "../../parsers/src/index.js";
 import {
   createDefaultLayoutEngineRegistry,
   createInitialCoordinateRoutingLayoutV3,
+  coordinateRoutingLayerLayoutDefaults,
   createStereotypeLayoutIntent,
   MemoryLayoutLogger,
   normalizeLayoutInput,
@@ -23,6 +24,7 @@ import type {
   DiagramRoutedEdgeSegment
 } from "../../core/src/index.js";
 import { __testSelectBendReductionCandidate, __testSelectRouteCompactionCandidate } from "./routing/templateRouter.js";
+import { OrthogonalRoutingIndex } from "./routing/routingIndex.js";
 
 export function runRoutingV2Tests(): void {
   runRoutingV2Slice1Tests();
@@ -42,6 +44,10 @@ export function runRoutingV2Slice2Tests(): void {
   acceptsCleanCoordinateRoutingV3WithoutWarning();
   convertsStereotypeGridV1WithWarnings();
   warnsForMissingAndInvalidNodeOrder();
+  layerJsonRunsThroughManualRoutingV2();
+  layerPlacementReplacesStaleCoordinatesAndCentersRows();
+  mixedPackingAffectsMeasuredLayerWidth();
+  duplicateLayerAssignmentIsRejected();
 }
 
 export function runRoutingV2Slice3Tests(): void {
@@ -69,12 +75,17 @@ export function runRoutingV2Slice5ATests(): void {
   sameSourceWithoutDividerCannotShareSegments();
   sameTargetWithoutDividerCannotShareSegments();
   fanOutMoreThanFourUsesDivider();
+  fanOutDividerUsesStraightSpokes();
   fanInMoreThanFourUsesDivider();
+  fanInDividerUsesStraightSpokes();
+  blockedStraightSpokeFallsBackToConstrainedRoute();
   fanOutAtOrBelowThresholdDoesNotUseDividerOrShareSegments();
   fanInAtOrBelowThresholdDoesNotUseDividerOrShareSegments();
   duplicatedDividerTrunkSegmentsAreIllegalOverlaps();
   dividerPlanningBucketsByRemoteGroup();
-  dividerSideFollowsRemoteGroupPacking();
+  twoFanOutHubsSameRemoteGroupUseOppositeSides();
+  secondDividerSideIsOppositeFirstDividerWhenCommonNodesAreOpposite();
+  dividerSideFollowsCommonNodeGeometry();
   dividerSideOverflowEmitsDiagnostic();
   dividerIsRoutedAsObstacle();
   endpointDividerInteriorHitIsHardFailure();
@@ -94,9 +105,12 @@ export function runRoutingV2Slice5ATests(): void {
   bendReductionRejectsIllegalOverlap();
   bendReductionRejectsCrossingIncrease();
   bendReductionRejectsNonMonotonicDividerSpoke();
+  routingIndexMatchesBruteForceForOrthogonalSegments();
+  routingIndexIgnoresZeroLengthSegmentsAndEndpointTouches();
 }
 
 export function runRoutingV2Slice5BTests(): void {
+  generatedPlacementCandidateEvaluationSkipsDividers();
   generatedDemoFixtureReachesStrictGoldenRoutingTarget();
   lockedDemoFixtureReachesStrictGoldenRoutingTarget();
   renamedGeneratedDemoTopologyAlsoReachesStrictGoldenRoutingTarget();
@@ -145,6 +159,108 @@ function warnsForMissingAndInvalidNodeOrder(): void {
   assert.ok(result.warnings.some((event) => event.type === "duplicate-node-removed"));
   assert.ok(result.warnings.some((event) => event.type === "unknown-node-removed"));
   assert.ok(result.warnings.some((event) => event.type === "missing-node-order-generated"));
+}
+
+function layerJsonRunsThroughManualRoutingV2(): void {
+  const parsed = parseLayerFixture();
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  const controller = requireGroupIntent(layout, "Controller");
+  const manager = requireGroupIntent(layout, "Manager");
+  const model = requireGroupIntent(layout, "Model");
+  controller.x = 9999;
+  manager.x = 9999;
+  model.x = 9999;
+  layout.layers = [
+    { id: "layer_app", groupIds: [controller.id, manager.id] },
+    { id: "layer_model", groupIds: [model.id] }
+  ];
+
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout
+  });
+  const routedController = result.document.groups?.find((group) => group.label === "Controller");
+
+  assert.equal(result.document.layout?.engine, "manual-routing-v2");
+  assert.ok(routedController?.layout);
+  assert.notEqual(routedController.layout.x, 9999);
+}
+
+function layerPlacementReplacesStaleCoordinatesAndCentersRows(): void {
+  const parsed = parseLayerFixture();
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  const controller = requireGroupIntent(layout, "Controller");
+  const manager = requireGroupIntent(layout, "Manager");
+  const model = requireGroupIntent(layout, "Model");
+  controller.x = 9999;
+  controller.y = 9999;
+  manager.x = 9999;
+  manager.y = 9999;
+  model.x = 9999;
+  model.y = 9999;
+  layout.layers = [
+    { id: "layer_app", groupIds: [controller.id, manager.id] },
+    { id: "layer_model", groupIds: [model.id] }
+  ];
+
+  const result = normalizeLayoutInput(layout, parsed, createContext(new MemoryLayoutLogger()));
+  const outputController = requireGroupIntent(result.intent, "Controller");
+  const outputManager = requireGroupIntent(result.intent, "Manager");
+  const outputModel = requireGroupIntent(result.intent, "Model");
+  const appLeft = Math.min(outputController.x, outputManager.x);
+  const appRight = Math.max(
+    outputController.x + (outputController.width ?? 0),
+    outputManager.x + (outputManager.width ?? 0)
+  );
+  const appCenter = (appLeft + appRight) / 2;
+  const modelCenter = outputModel.x + (outputModel.width ?? 0) / 2;
+
+  assert.notEqual(outputController.x, 9999);
+  assert.equal(outputController.y, outputManager.y);
+  assert.ok(outputModel.y > outputController.y);
+  assert.ok(Math.abs(appCenter - modelCenter) < 0.001);
+}
+
+function mixedPackingAffectsMeasuredLayerWidth(): void {
+  const parsed = parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Model>> FirstModel",
+    "<<Model>> SecondModel",
+    "FirstModel --> SecondModel : ref"
+  ].join("\n"));
+  const verticalLayout = createInitialCoordinateRoutingLayoutV3(parsed);
+  const verticalModel = requireGroupIntent(verticalLayout, "Model");
+  verticalModel.packing = "vertical";
+  verticalLayout.layers = [{ id: "layer_model", groupIds: [verticalModel.id] }];
+
+  const horizontalLayout = JSON.parse(JSON.stringify(verticalLayout)) as CoordinateRoutingLayoutV3;
+  const horizontalModel = requireGroupIntent(horizontalLayout, "Model");
+  horizontalModel.packing = "horizontal";
+
+  const vertical = normalizeLayoutInput(verticalLayout, parsed, createContext(new MemoryLayoutLogger()));
+  const horizontal = normalizeLayoutInput(horizontalLayout, parsed, createContext(new MemoryLayoutLogger()));
+  const verticalWidth = requireGroupIntent(vertical.intent, "Model").width ?? 0;
+  const horizontalWidth = requireGroupIntent(horizontal.intent, "Model").width ?? 0;
+
+  assert.ok(horizontalWidth > verticalWidth);
+  assert.ok(horizontalWidth > coordinateRoutingLayerLayoutDefaults.groupGapX);
+}
+
+function duplicateLayerAssignmentIsRejected(): void {
+  const parsed = parseLayerFixture();
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  const controller = requireGroupIntent(layout, "Controller");
+  const manager = requireGroupIntent(layout, "Manager");
+  layout.layers = [
+    { id: "layer_one", groupIds: [controller.id] },
+    { id: "layer_two", groupIds: [manager.id, controller.id] }
+  ];
+
+  assert.throws(
+    () => normalizeLayoutInput(layout, parsed, createContext(new MemoryLayoutLogger())),
+    /assign group .* more than once/
+  );
 }
 
 function routeOnlyPreservesGroupCoordinates(): void {
@@ -402,6 +518,21 @@ function fanOutMoreThanFourUsesDivider(): void {
   assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
 }
 
+function fanOutDividerUsesStraightSpokes(): void {
+  const parsed = parseMermaidClassDiagram(fanOutFixture(5));
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  setGroup(layout, "Controller", { x: 0, y: 0 });
+  setGroup(layout, "Model", { x: 900, y: 0 });
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+
+  assertStraightDividerSpokes(result.document, "fanOut");
+}
+
 function fanInMoreThanFourUsesDivider(): void {
   const result = runManualV2(fanInFixture(5), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
 
@@ -411,6 +542,46 @@ function fanInMoreThanFourUsesDivider(): void {
   assertDividerConnectorGraph(result.document);
   assert.equal(result.report.routingSummary?.edgeNodeHits, 0);
   assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
+}
+
+function fanInDividerUsesStraightSpokes(): void {
+  const parsed = parseMermaidClassDiagram(fanInFixture(5));
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  setGroup(layout, "Controller", { x: 0, y: 0 });
+  setGroup(layout, "Model", { x: 900, y: 0 });
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+
+  assertStraightDividerSpokes(result.document, "fanIn");
+}
+
+function blockedStraightSpokeFallsBackToConstrainedRoute(): void {
+  const parsed = parseMermaidClassDiagram(fanOutFixture(5));
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  const model = layout.groups.find((group) => group.label === "Model");
+  assert.ok(model);
+  model.packing = "horizontal";
+  model.packingLocked = true;
+  setGroup(layout, "Controller", { x: 0, y: 0 });
+  setGroup(layout, "Model", { x: 900, y: 0 });
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+  const divider = result.document.routingDividers?.find((candidate) => candidate.mode === "fanOut");
+  assert.ok(divider);
+  const spokes = dividerSpokeSegments(result.document, divider);
+
+  assert.equal(result.report.routingSummary?.hardValid, true);
+  assert.equal(result.report.routingSummary?.edgeNodeHits, 0);
+  assert.equal(result.report.routingSummary?.illegalSegmentOverlaps, 0);
+  assert.ok(spokes.some((spoke) => spoke.waypoints.length > 0), "Expected at least one blocked straight spoke to fall back.");
 }
 
 function fanOutAtOrBelowThresholdDoesNotUseDividerOrShareSegments(): void {
@@ -449,13 +620,50 @@ function dividerPlanningBucketsByRemoteGroup(): void {
   assert.ok(dividers.every((divider) => divider.sourceEdgeIds.length === 5));
 }
 
-function dividerSideFollowsRemoteGroupPacking(): void {
+function twoFanOutHubsSameRemoteGroupUseOppositeSides(): void {
+  const result = runManualV2(twoFanOutHubsSameRemoteGroupFixture(), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+  const dividers = result.document.routingDividers ?? [];
+
+  assert.equal(dividers.length, 2);
+  assert.equal(dividers[0].remoteGroupId, "group_stereotype_Model");
+  assert.equal(dividers[1].remoteGroupId, "group_stereotype_Model");
+  assert.equal(dividers[0].sideSlot, 0);
+  assert.equal(dividers[1].sideSlot, 1);
+  assert.equal(dividers[1].side, oppositeSide(dividers[0].side));
+  assert.equal(result.report.routingSummary?.routingFailures, 0);
+}
+
+function secondDividerSideIsOppositeFirstDividerWhenCommonNodesAreOpposite(): void {
+  const parsed = parseMermaidClassDiagram(oppositeFanOutHubsSameRemoteGroupFixture());
+  const layout = createInitialCoordinateRoutingLayoutV3(parsed);
+  setGroup(layout, "Controller", { x: 0, y: 0 });
+  setGroup(layout, "Model", { x: 900, y: 0 });
+  setGroup(layout, "Manager", { x: 1800, y: 0 });
+  const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
+    document: parsed,
+    mode: "manual-routing-v2",
+    layoutInput: layout,
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+  const dividers = result.document.routingDividers ?? [];
+
+  assert.equal(dividers.length, 2);
+  assert.equal(dividers[0].commonNodeId, "RightManager");
+  assert.equal(dividers[0].side, "east");
+  assert.equal(dividers[1].commonNodeId, "LeftController");
+  assert.equal(dividers[1].side, "west");
+  assert.equal(dividers[1].side, oppositeSide(dividers[0].side));
+}
+
+function dividerSideFollowsCommonNodeGeometry(): void {
   const parsed = parseMermaidClassDiagram(fanOutFixture(5));
   const layout = createInitialCoordinateRoutingLayoutV3(parsed);
   const model = layout.groups.find((group) => group.label === "Model");
   assert.ok(model);
   model.packing = "horizontal";
   model.packingLocked = true;
+  setGroup(layout, "Controller", { x: 0, y: 0 });
+  setGroup(layout, "Model", { x: 900, y: 0 });
   const result = createDefaultLayoutEngineRegistry().get("manual-routing-v2").run({
     document: parsed,
     mode: "manual-routing-v2",
@@ -465,16 +673,20 @@ function dividerSideFollowsRemoteGroupPacking(): void {
   const divider = result.document.routingDividers?.[0];
 
   assert.ok(divider);
-  assert.ok(divider.side === "north" || divider.side === "south");
-  assert.equal(divider.orientation, "horizontal");
+  assert.equal(divider.side, "west");
+  assert.equal(divider.orientation, "vertical");
 }
 
 function dividerSideOverflowEmitsDiagnostic(): void {
   const result = runManualV2(threeFanOutHubsSameRemoteGroupFixture(), { routeStrategy: "template-with-outer-lanes", traceRouting: true });
+  const dividers = result.document.routingDividers ?? [];
 
-  assert.equal(result.document.routingDividers?.length, 3);
+  assert.equal(dividers.length, 3);
+  assert.equal(dividers[2].sideSlot, 2);
+  assert.ok((dividers[2].sideOffset ?? 0) > 0);
   assert.ok(result.report.warnings.some((event) => event.type === "divider-side-overflow"));
   assert.equal(result.report.routingSummary?.dividerSideOverflow, 1);
+  assert.equal(result.report.routingSummary?.routingFailures, 0);
   assert.ok(result.report.diagnostics.some((diagnostic) => diagnostic.reason === "divider-side-overflow"));
 }
 
@@ -566,6 +778,26 @@ function assertDividerConnectorGraph(document: DiagramDocument): void {
       assertDividerSpokeConstraints(document, divider, spoke);
     }
   }
+}
+
+function assertStraightDividerSpokes(document: DiagramDocument, mode: DiagramRoutingDivider["mode"]): void {
+  const divider = document.routingDividers?.find((candidate) => candidate.mode === mode);
+  assert.ok(divider, `Expected ${mode} divider.`);
+  const spokes = dividerSpokeSegments(document, divider);
+
+  assert.equal(spokes.length, divider.sourceEdgeIds.length);
+  for (const spoke of spokes) {
+    assert.equal(spoke.strategy, "divider");
+    assert.equal(spoke.waypoints.length, 0, `${spoke.id} should be a straight spoke.`);
+    assert.equal(countBends(routedSegmentPoints(document, divider, spoke)), 0, `${spoke.id} should not bend.`);
+  }
+}
+
+function dividerSpokeSegments(document: DiagramDocument, divider: DiagramRoutingDivider): DiagramRoutedEdgeSegment[] {
+  const edgeById = new Map(document.edges.map((edge) => [edge.id, edge]));
+  return divider.sourceEdgeIds.flatMap((edgeId) =>
+    edgeById.get(edgeId)?.layout?.routedSegments?.filter((segment) => segment.id.endsWith(":divider-spoke")) ?? []
+  );
 }
 
 function assertDividerTrunkConstraints(divider: DiagramRoutingDivider, trunk: DiagramRoutedEdgeSegment): void {
@@ -923,6 +1155,125 @@ function bendReductionRejectsNonMonotonicDividerSpoke(): void {
   assert.equal(__testSelectBendReductionCandidate(fixture), undefined);
 }
 
+function routingIndexMatchesBruteForceForOrthogonalSegments(): void {
+  const acceptedPaths: DiagramPoint[][] = [
+    [{ x: 100, y: 50 }, { x: 260, y: 50 }],
+    [{ x: 160, y: 0 }, { x: 160, y: 140 }],
+    [{ x: 20, y: 120 }, { x: 220, y: 120 }, { x: 220, y: 220 }],
+    [{ x: 300, y: 20 }, { x: 300, y: 180 }]
+  ];
+  const candidates: DiagramPoint[][] = [
+    [{ x: 0, y: 50 }, { x: 320, y: 50 }],
+    [{ x: 160, y: -40 }, { x: 160, y: 200 }],
+    [{ x: 0, y: 80 }, { x: 240, y: 80 }, { x: 240, y: 220 }],
+    [{ x: 260, y: 0 }, { x: 260, y: 200 }, { x: 340, y: 200 }]
+  ];
+  const index = new OrthogonalRoutingIndex();
+  acceptedPaths.forEach((points) => index.addPath(points));
+
+  for (const candidate of candidates) {
+    assert.equal(index.countIllegalSegmentOverlaps(candidate), bruteSegmentOverlapCount(candidate, acceptedPaths));
+    assert.equal(index.countCrossingsWithAccepted(candidate), bruteCrossingCount(candidate, acceptedPaths));
+  }
+}
+
+function routingIndexIgnoresZeroLengthSegmentsAndEndpointTouches(): void {
+  const index = new OrthogonalRoutingIndex();
+  const acceptedPaths: DiagramPoint[][] = [
+    [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 100, y: 0 }]
+  ];
+  acceptedPaths.forEach((points) => index.addPath(points));
+
+  assert.equal(index.countIllegalSegmentOverlaps([{ x: 100, y: 0 }, { x: 200, y: 0 }]), 0);
+  assert.equal(index.countCrossingsWithAccepted([{ x: 100, y: 0 }, { x: 100, y: 100 }]), 0);
+  assert.equal(index.countIllegalSegmentOverlaps([{ x: 25, y: 0 }, { x: 25, y: 0 }, { x: 75, y: 0 }]), 1);
+}
+
+function bruteSegmentOverlapCount(points: DiagramPoint[], acceptedPaths: DiagramPoint[][]): number {
+  let overlaps = 0;
+  for (const [start, end] of nonZeroPathSegments(points)) {
+    for (const accepted of acceptedPaths) {
+      for (const [acceptedStart, acceptedEnd] of nonZeroPathSegments(accepted)) {
+        if (testSegmentsOverlap(start, end, acceptedStart, acceptedEnd)) {
+          overlaps += 1;
+        }
+      }
+    }
+  }
+  return overlaps;
+}
+
+function bruteCrossingCount(points: DiagramPoint[], acceptedPaths: DiagramPoint[][]): number {
+  let crossings = 0;
+  for (const [start, end] of nonZeroPathSegments(points)) {
+    for (const accepted of acceptedPaths) {
+      for (const [acceptedStart, acceptedEnd] of nonZeroPathSegments(accepted)) {
+        if (
+          !testSegmentsOverlap(start, end, acceptedStart, acceptedEnd) &&
+          testSegmentsIntersect(start, end, acceptedStart, acceptedEnd) &&
+          !testPointsEqual(start, acceptedStart) &&
+          !testPointsEqual(start, acceptedEnd) &&
+          !testPointsEqual(end, acceptedStart) &&
+          !testPointsEqual(end, acceptedEnd)
+        ) {
+          crossings += 1;
+        }
+      }
+    }
+  }
+  return crossings;
+}
+
+function nonZeroPathSegments(points: DiagramPoint[]): Array<[DiagramPoint, DiagramPoint]> {
+  return points.slice(1)
+    .map((point, index): [DiagramPoint, DiagramPoint] => [points[index], point])
+    .filter(([start, end]) => !testPointsEqual(start, end));
+}
+
+function testSegmentsOverlap(leftStart: DiagramPoint, leftEnd: DiagramPoint, rightStart: DiagramPoint, rightEnd: DiagramPoint): boolean {
+  if (leftStart.x === leftEnd.x && rightStart.x === rightEnd.x && leftStart.x === rightStart.x) {
+    return testRangesOverlap(leftStart.y, leftEnd.y, rightStart.y, rightEnd.y);
+  }
+  if (leftStart.y === leftEnd.y && rightStart.y === rightEnd.y && leftStart.y === rightStart.y) {
+    return testRangesOverlap(leftStart.x, leftEnd.x, rightStart.x, rightEnd.x);
+  }
+  return false;
+}
+
+function testSegmentsIntersect(firstStart: DiagramPoint, firstEnd: DiagramPoint, secondStart: DiagramPoint, secondEnd: DiagramPoint): boolean {
+  const firstMinX = Math.min(firstStart.x, firstEnd.x);
+  const firstMaxX = Math.max(firstStart.x, firstEnd.x);
+  const firstMinY = Math.min(firstStart.y, firstEnd.y);
+  const firstMaxY = Math.max(firstStart.y, firstEnd.y);
+  const secondMinX = Math.min(secondStart.x, secondEnd.x);
+  const secondMaxX = Math.max(secondStart.x, secondEnd.x);
+  const secondMinY = Math.min(secondStart.y, secondEnd.y);
+  const secondMaxY = Math.max(secondStart.y, secondEnd.y);
+
+  return firstMinX <= secondMaxX &&
+    firstMaxX >= secondMinX &&
+    firstMinY <= secondMaxY &&
+    firstMaxY >= secondMinY &&
+    testOrientation(firstStart, firstEnd, secondStart) * testOrientation(firstStart, firstEnd, secondEnd) <= 0 &&
+    testOrientation(secondStart, secondEnd, firstStart) * testOrientation(secondStart, secondEnd, firstEnd) <= 0;
+}
+
+function testOrientation(a: DiagramPoint, b: DiagramPoint, c: DiagramPoint): number {
+  const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+  if (Math.abs(value) < 0.001) {
+    return 0;
+  }
+  return value > 0 ? 1 : -1;
+}
+
+function testRangesOverlap(a: number, b: number, c: number, d: number): boolean {
+  return Math.min(a, b) < Math.max(c, d) && Math.max(a, b) > Math.min(c, d);
+}
+
+function testPointsEqual(left: DiagramPoint, right: DiagramPoint): boolean {
+  return Math.abs(left.x - right.x) < 0.001 && Math.abs(left.y - right.y) < 0.001;
+}
+
 function bendReductionFixture(options: {
   extraNodes?: ReturnType<typeof node>[];
   acceptedPaths?: Array<{ edge: DiagramEdge; points: DiagramPoint[] }>;
@@ -977,6 +1328,20 @@ function occupancyPath(id: string, points: DiagramPoint[]): { edge: DiagramEdge;
     },
     points
   };
+}
+
+function generatedPlacementCandidateEvaluationSkipsDividers(): void {
+  const parsed = parseMermaidClassDiagram(fanOutFixture(5));
+  const result = createDefaultLayoutEngineRegistry().get("suggest-initial-v2").run({
+    document: parsed,
+    mode: "suggest-initial-v2",
+    options: { routeStrategy: "template-with-outer-lanes", traceRouting: true }
+  });
+  const evaluations = result.report.trace?.filter((event) => event.type === "generated-layout-candidate-evaluated") ?? [];
+
+  assert.ok(evaluations.length > 0);
+  assert.ok(evaluations.every((event) => event.data?.dividerCount === 0));
+  assert.equal(result.document.routingDividers?.length, 1);
 }
 
 function generatedDemoFixtureReachesStrictGoldenRoutingTarget(): void {
@@ -1137,6 +1502,18 @@ function fanOutTwoRemoteGroupsFixture(): string {
   ].join("\n");
 }
 
+function twoFanOutHubsSameRemoteGroupFixture(): string {
+  return [
+    "classDiagram",
+    "<<Controller>> FirstController",
+    "<<Controller>> SecondController",
+    ...Array.from({ length: 5 }, (_, index) => `<<Model>> TargetModel${index + 1}`),
+    ...["FirstController", "SecondController"].flatMap((source) =>
+      Array.from({ length: 5 }, (_, index) => `${source} --> TargetModel${index + 1} : ${source}_${index + 1}`)
+    )
+  ].join("\n");
+}
+
 function threeFanOutHubsSameRemoteGroupFixture(): string {
   return [
     "classDiagram",
@@ -1147,6 +1524,17 @@ function threeFanOutHubsSameRemoteGroupFixture(): string {
     ...["FirstController", "SecondController", "ThirdController"].flatMap((source) =>
       Array.from({ length: 5 }, (_, index) => `${source} --> TargetModel${index + 1} : ${source}_${index + 1}`)
     )
+  ].join("\n");
+}
+
+function oppositeFanOutHubsSameRemoteGroupFixture(): string {
+  return [
+    "classDiagram",
+    "<<Manager>> RightManager",
+    "<<Controller>> LeftController",
+    ...Array.from({ length: 5 }, (_, index) => `<<Model>> TargetModel${index + 1}`),
+    ...Array.from({ length: 5 }, (_, index) => `RightManager --> TargetModel${index + 1} : manager_${index + 1}`),
+    ...Array.from({ length: 5 }, (_, index) => `LeftController --> TargetModel${index + 1} : controller_${index + 1}`)
   ].join("\n");
 }
 
@@ -1401,12 +1789,29 @@ function setGroup(layout: CoordinateRoutingLayoutV3, label: string, patch: { x: 
   group.y = patch.y;
 }
 
+function requireGroupIntent(layout: CoordinateRoutingLayoutV3, label: string) {
+  const group = layout.groups.find((candidate) => candidate.label === label);
+  assert.ok(group, `Expected ${label} group to exist.`);
+  return group;
+}
+
 function parseBasicFixture(): ReturnType<typeof parseMermaidClassDiagram> {
   return parseMermaidClassDiagram([
     "classDiagram",
     "<<Controller>> AppController",
     "<<Model>> AppModel",
     "AppController --> AppModel : uses"
+  ].join("\n"));
+}
+
+function parseLayerFixture(): ReturnType<typeof parseMermaidClassDiagram> {
+  return parseMermaidClassDiagram([
+    "classDiagram",
+    "<<Controller>> AppController",
+    "<<Manager>> AppManager",
+    "<<Model>> AppModel",
+    "AppController --> AppManager : calls",
+    "AppManager --> AppModel : reads"
   ].join("\n"));
 }
 

@@ -7,7 +7,12 @@ export function roundCoordinate(value: number): number {
 export function pathSegments(points: DiagramPoint[]): Array<[DiagramPoint, DiagramPoint]> {
   const segments: Array<[DiagramPoint, DiagramPoint]> = [];
   for (let index = 0; index < points.length - 1; index += 1) {
-    segments.push([points[index], points[index + 1]]);
+    const start = points[index];
+    const end = points[index + 1];
+    if (roundCoordinate(start.x) === roundCoordinate(end.x) && roundCoordinate(start.y) === roundCoordinate(end.y)) {
+      continue;
+    }
+    segments.push([start, end]);
   }
   return segments;
 }

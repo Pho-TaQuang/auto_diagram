@@ -18,9 +18,9 @@ CLASS_BLOCK_START_RE = re.compile(r"^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{\s*$")
 CLASS_DECLARATION_RE = re.compile(r"^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*$")
 INLINE_STEREOTYPE_RE = re.compile(r"^<<([^>]+)>>\s+([A-Za-z_][A-Za-z0-9_]*)\s*$")
 RELATIONSHIP_RE = re.compile(
-    r"^([A-Za-z_][A-Za-z0-9_]*)\s+"
+    r"^([A-Za-z_][A-Za-z0-9_]*)(?:\s+\"([^\"]*)\")?\s+"
     r"(<\|\.\.|<\|--|\.\.\|>|--\|>|-->|o--|\*--|<--|<\.\.|--o|--\*|\.\.>|--|\.\.)"
-    r"\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(.+))?$"
+    r"\s+(?:\"([^\"]*)\"\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s*:\s*(.+))?$"
 )
 
 EXACT_STEREOTYPE_ORDER = [
@@ -45,7 +45,6 @@ SUGGESTED_GROUP_POSITIONS = {
     "DTO": {"x": 1, "y": 2},
 }
 SUGGESTED_FALLBACK_START_ROW = 3
-SYNTHETIC_UNGROUPED_LABEL = "Ungrouped"
 DEFAULT_GROUP_COLUMNS = 3
 DEFAULT_CELL_WIDTH = 360
 DEFAULT_CELL_HEIGHT = 280
@@ -159,9 +158,11 @@ def parse_mermaid_class_diagram(source: str) -> dict[str, Any]:
 
         match = RELATIONSHIP_RE.match(line)
         if match:
-            source_id, operator, target_id, label = match.groups()
+            source_id, source_multiplicity, operator, target_multiplicity, target_id, label = match.groups()
             ensure_node(source_id)
             ensure_node(target_id)
+            normalized_source_multiplicity = normalize_quoted_relationship_label(source_multiplicity)
+            normalized_target_multiplicity = normalize_quoted_relationship_label(target_multiplicity)
             edges.append(
                 {
                     "id": f"edge_{len(edges) + 1}_{source_id}_{target_id}",
@@ -169,6 +170,8 @@ def parse_mermaid_class_diagram(source: str) -> dict[str, Any]:
                     "targetId": target_id,
                     "operator": operator,
                     "kind": relationship_kind_from_operator(operator),
+                    **({"sourceMultiplicity": normalized_source_multiplicity} if normalized_source_multiplicity else {}),
+                    **({"targetMultiplicity": normalized_target_multiplicity} if normalized_target_multiplicity else {}),
                     **({"label": normalize_generic_markers(label.strip())} if label else {}),
                 }
             )
@@ -204,7 +207,7 @@ def parse_mermaid_class_diagram(source: str) -> dict[str, Any]:
                     "severity": "warning",
                     "message": (
                         f"Class {node['id']} is referenced by a relationship but has no class declaration "
-                        "or stereotype; generated as an empty class in the Ungrouped layout group."
+                        "or stereotype; generated as an empty class without stereotype metadata."
                     ),
                 }
             )
@@ -274,6 +277,13 @@ def normalize_generic_markers(value: str) -> str:
         else:
             result.append(char)
     return "".join(result)
+
+
+def normalize_quoted_relationship_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalize_generic_markers(normalized) if normalized else None
 
 
 def estimate_class_node_layout(node: dict[str, Any]) -> dict[str, float]:
@@ -348,8 +358,8 @@ def build_exact_stereotype_groups(nodes: list[dict[str, Any]], columns: int) -> 
     for node in nodes:
         exact = node.get("stereotype") or None
         kind = "stereotype" if exact else "synthetic"
-        label = exact or SYNTHETIC_UNGROUPED_LABEL
-        key = f"{kind}:{label}"
+        label = exact or node["label"]
+        key = f"{kind}:{label}" if exact else f"{kind}:{node['id']}"
         group = groups_by_key.get(key)
         if group is None:
             group = {

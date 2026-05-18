@@ -1023,6 +1023,7 @@ Decision:
 - Keep groups logical only for now; draw.io export still emits class boxes and edges, not visible group containers.
 - Use a built-in order only when the group label exactly matches a known stereotype.
 - Unknown exact stereotypes are still valid groups and are placed after known groups in first-seen order.
+- Class không có stereotype không gom chung vào một group `Ungrouped`; mỗi class là một synthetic group độc lập theo tên class.
 ```
 
 ---
@@ -1209,8 +1210,9 @@ Decision:
 - For fan-in, sources are bucketed by `common target node + remote group`.
 - Classes in different remote groups are different clusters even when they share the same common endpoint.
 - Dividers are placed on a side of the remote group rectangle and become routing obstacles before ordinary edges route.
-- Horizontal remote groups use north/south dividers; vertical remote groups use west/east dividers.
-- If a remote group already has a divider on one side, the second divider uses the opposite side; more than two dividers alternate sides with offsets and emit `divider-side-overflow`.
+- Auto layout scores generated group placement before materializing routing dividers, so divider rectangles cannot affect candidate placement.
+- The first divider for a remote group uses the side facing the common endpoint; the second divider uses the opposite side.
+- Third and later dividers on the same remote group emit `divider-side-overflow` and use bounded best-effort side/offset search.
 - Divider anchors are distributed along the long side so split connector segments avoid exact anchor stacking and reduce bends.
 - Mermaid semantic relationships remain unchanged in DiagramDocument.edges.
 - Draw.io export renders the divider as a small connectable vertex and splits the visual edges through it.
@@ -1228,6 +1230,8 @@ Decision:
 - Auto layout only runs for initial layout generation or explicit Auto actions.
 - Route-only must preserve group x/y, locked packing, and locked node order.
 - The public routing-v2 layout file uses CoordinateRoutingLayoutV3 with version: 3 and layoutMode: "coordinate-routing".
+- Root-level CoordinateRoutingLayoutV3 layers are layout intent, not free-form drawing: layers only derive group x/y by measuring groups first, laying each layer horizontally, and centering rows as a whole.
+- Layers do not lock group packing; users can still switch each group between vertical and horizontal packing, and layer placement recomputes from that measured size.
 - Existing relative-flow v2 and stereotype-grid v1 layout files are migration inputs, not the new canonical format.
 - Layout normalization, fallback routing, repair, and hard validation must emit structured LayoutLogEvent entries; no silent fix policy.
 - Ordinary routed edges may never share overlapping segments; sharing the same source or the same target is not an exception.

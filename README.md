@@ -154,6 +154,7 @@ The parser does not generate layout geometry.
 The layout engine computes:
 
 * stereotype group placement
+* per-class synthetic groups for classes without stereotypes
 * node placement
 * node sizing
 * packing direction
@@ -221,7 +222,7 @@ Dividers:
 * reduce connector congestion
 * remain deterministic
 
-Dividers are routing primitives, not post-processing decorations.
+Dividers are routing primitives, not post-processing decorations. Auto layout v2 scores generated group-placement candidates before routing dividers are materialized, so divider rectangles do not influence greedy group placement or selected candidate choice. The final routing pass then adds dividers as connector-graph nodes: for each remote group, the first divider uses the side facing the common endpoint, the second uses the opposite side, and additional dividers emit `divider-side-overflow` while using bounded best-effort side and offset search.
 
 ---
 
@@ -518,6 +519,22 @@ npm run generate \
   --layout out/demo.routing-v3.json \
   --engine v2
 ```
+
+Routing-v2 layout JSON may also include root-level `layers`. When `layers` is present, the engine measures each group with its current `packing` and `nodeOrder`, places groups into horizontal centered layer rows, and then runs routing. Without `layers`, v2 keeps the explicit group `x/y` coordinates.
+
+```json
+{
+  "version": 3,
+  "layoutMode": "coordinate-routing",
+  "layers": [
+    { "id": "api", "groupIds": ["group_stereotype_Controller"] },
+    { "id": "domain", "groupIds": ["group_stereotype_Manager", "group_stereotype_Model"] }
+  ],
+  "groups": []
+}
+```
+
+The web manual layout wizard can export a CLI-ready routing-v3 intent JSON that preserves `layers`, group packing, node order, and routing options.
 
 ---
 

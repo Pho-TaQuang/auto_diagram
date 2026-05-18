@@ -18,6 +18,7 @@ const fixture = readFileSync("docs/demo_mermaid.md", "utf8");
 
 export function runMxGraphModelTests(): void {
   parsesAndSerializesMxGraphModel();
+  infersIndependentGroupsForUnstereotypedClassesWithoutFrames();
   detectsAndNormalizesChildRowEndpoints();
   updatesClassGeometryOnlyOnParentCell();
   updatesEdgeAnchorsAndWaypoints();
@@ -43,6 +44,20 @@ function parsesAndSerializesMxGraphModel(): void {
   assert.equal(rehydratedView.edges.length, view.edges.length);
   assert.ok(view.classes.some((classCell) => classCell.children.length > 0));
   assert.ok(view.edges.some((edge) => edge.waypoints.length > 0));
+}
+
+function infersIndependentGroupsForUnstereotypedClassesWithoutFrames(): void {
+  const xml = toMxGraphModelXml(applyStereotypeGridLayout(parseMermaidClassDiagram([
+    "classDiagram",
+    "class FirstClass",
+    "class SecondClass",
+    "FirstClass ..> SecondClass : uses"
+  ].join("\n"))));
+  const view = extractLayoutViewModel(parseMxGraphModelXml(xml));
+
+  assert.equal(view.groups.length, 2);
+  assert.deepEqual(view.groups.map((group) => group.label), ["FirstClass", "SecondClass"]);
+  assert.deepEqual(view.groups.map((group) => group.classIds.length), [1, 1]);
 }
 
 function detectsAndNormalizesChildRowEndpoints(): void {

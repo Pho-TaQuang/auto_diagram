@@ -126,7 +126,7 @@ function warnsAboutImplicitRelationshipClasses(): void {
   assert.equal(document.nodes.find((node) => node.id === "DeclaredClass")?.attributes.length, 1);
   assert.equal(document.nodes.find((node) => node.id === "MissingClass")?.attributes.length, 0);
   assert.ok(document.diagnostics.some((diagnostic) =>
-    diagnostic.message === "Class MissingClass is referenced by a relationship but has no class declaration or stereotype; generated as an empty class in the Ungrouped layout group."
+    diagnostic.message === "Class MissingClass is referenced by a relationship but has no class declaration or stereotype; generated as an empty class without stereotype metadata."
   ));
   assert.equal(document.diagnostics.some((diagnostic) => diagnostic.message.includes("DeclaredClass is referenced")), false);
 }

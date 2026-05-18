@@ -1,6 +1,6 @@
 import React, { type ChangeEvent, type DragEvent, type MouseEvent, type PointerEvent, type ReactNode, type WheelEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DiagramLayoutScore } from "../../../packages/core/src/index.js";
+import type { DiagramDocument, DiagramLayoutScore } from "../../../packages/core/src/index.js";
 import {
   AlertTriangle,
   Box,
@@ -47,9 +47,13 @@ import {
   serializeMxGraphState,
   type MxGraphImportResult,
   type StereotypeLayoutIntent,
+  type WebLayoutIntent,
   type WebPipelineResult
 } from "./pipeline.js";
-import type { LayoutEngineId } from "../../../packages/layout/src/index.js";
+import type { CoordinateRoutingLayoutV3, LayoutEngineId } from "../../../packages/layout/src/index.js";
+import { getLayoutAdapter } from "./adapters/index.js";
+import { ImportWizardModal } from "./ImportWizardModal.js";
+import type { LayoutWorkerResponse } from "./layoutWorker.js";
 
 type SourceMode = "mermaid" | "mxGraphXml" | "layoutJson";
 type LeftTab = "classes" | "edges" | "groups" | "extends" | "layoutJson";
@@ -62,7 +66,8 @@ type ClassMove = { id: string; x: number; y: number };
 type IntentChangeOptions = { history?: boolean; status?: string };
 type EditorSnapshot = {
   mxGraphState?: MxGraphModel;
-  intentOverride?: StereotypeLayoutIntent;
+  intentOverride?: WebLayoutIntent;
+  engineId: LayoutEngineId;
 };
 type GeneratedPipelineState = {
   key: string;
@@ -106,7 +111,8 @@ export function App(): React.JSX.Element {
   const [sourceMode, setSourceMode] = useState<SourceMode>("mermaid");
   const [source, setSource] = useState(demoSource);
   const [engineId, setEngineId] = useState<LayoutEngineId>("auto-arrange-v2");
-  const [intentOverride, setIntentOverride] = useState<StereotypeLayoutIntent | undefined>();
+  const [intentOverride, setIntentOverride] = useState<WebLayoutIntent | undefined>();
+  const [wizardProps, setWizardProps] = useState<{ document: DiagramDocument; initialIntent: CoordinateRoutingLayoutV3 } | undefined>();
   const [groupFrames, setGroupFrames] = useState(false);
   const [mxGraphState, setMxGraphState] = useState<MxGraphModel | undefined>();
   const [undoStack, setUndoStack] = useState<EditorSnapshot[]>([]);
@@ -146,7 +152,8 @@ export function App(): React.JSX.Element {
         if (sourceMode === "mermaid") {
           const metadata = readWebPipelineMetadata({
             source,
-            intent: intentOverride
+            intent: intentOverride,
+            engineId
           });
           return {
             result: serializeMxGraphState(mxGraphState),
@@ -198,7 +205,7 @@ export function App(): React.JSX.Element {
         error: error instanceof Error ? error.message : String(error)
       };
     }
-  }, [generatedPipeline, groupFrames, intentOverride, layoutJob, mermaidPipelineKey, mxGraphState, source, sourceMode]);
+  }, [engineId, generatedPipeline, groupFrames, intentOverride, layoutJob, mermaidPipelineKey, mxGraphState, source, sourceMode]);
 
   const result = activeState.result;
   const layoutView = result?.layoutView;
@@ -236,12 +243,14 @@ export function App(): React.JSX.Element {
 
   const captureEditorSnapshot = (): EditorSnapshot => ({
     mxGraphState: activeGraph ? cloneMxGraphForHistory(activeGraph) : undefined,
-    intentOverride: intentOverride ? cloneLayoutIntent(intentOverride) : undefined
+    intentOverride: intentOverride ? cloneLayoutIntent(intentOverride, engineId) : undefined,
+    engineId
   });
 
   const restoreEditorSnapshot = (snapshot: EditorSnapshot): void => {
+    setEngineId(snapshot.engineId);
     setMxGraphState(snapshot.mxGraphState ? cloneMxGraphForHistory(snapshot.mxGraphState) : undefined);
-    setIntentOverride(snapshot.intentOverride ? cloneLayoutIntent(snapshot.intentOverride) : undefined);
+    setIntentOverride(snapshot.intentOverride ? cloneLayoutIntent(snapshot.intentOverride, snapshot.engineId) : undefined);
   };
 
   const pushUndoSnapshot = (snapshot: EditorSnapshot): void => {
@@ -261,13 +270,12 @@ export function App(): React.JSX.Element {
     const jobId = layoutJobIdRef.current + 1;
     layoutJobIdRef.current = jobId;
     const requestSource = source;
-    const requestIntent = intentOverride ? cloneLayoutIntent(intentOverride) : undefined;
+    const requestIntent = intentOverride ? cloneLayoutIntent(intentOverride, engineId) : undefined;
     const requestGroupFrames = groupFrames;
     const requestEngineId = engineId;
     const previousSummary = layoutSummaryFromState(generatedPipeline?.state);
-    let timeoutId: number | undefined;
-    let frameId: number | undefined;
     let cancelled = false;
+    const worker = new Worker(new URL("./layoutWorker.ts", import.meta.url), { type: "module" });
 
     setLayoutJob({
       id: jobId,
@@ -281,76 +289,89 @@ export function App(): React.JSX.Element {
     });
     setStatus(requestIntent ? "Applying layout intent..." : "Running auto layout...");
 
-    frameId = window.requestAnimationFrame(() => {
-      timeoutId = window.setTimeout(() => {
-        if (cancelled || layoutJobIdRef.current !== jobId) {
-          return;
+    worker.onmessage = (event: MessageEvent<LayoutWorkerResponse>) => {
+      const message = event.data;
+      if (cancelled || message.id !== jobId || layoutJobIdRef.current !== jobId) {
+        return;
+      }
+
+      if (message.error || !message.result) {
+        const errorMessage = message.error ?? "Layout worker returned no result.";
+        setGeneratedPipeline({
+          key: mermaidPipelineKey,
+          state: { error: errorMessage }
+        });
+        setLayoutJob({
+          id: jobId,
+          key: mermaidPipelineKey,
+          running: false,
+          title: "Layout failed",
+          phase: "Error",
+          startedAt: Date.now(),
+          error: errorMessage
+        });
+        setStatus("Layout failed");
+        worker.terminate();
+        return;
+      }
+
+      const nextResult = message.result;
+      setGeneratedPipeline({
+        key: mermaidPipelineKey,
+        state: {
+          result: nextResult,
+          parsed: nextResult.parsed,
+          intent: nextResult.intent
         }
+      });
+      setLayoutJob({
+        id: jobId,
+        key: mermaidPipelineKey,
+        running: false,
+        title: "Layout complete",
+        phase: "Complete",
+        startedAt: Date.now(),
+        candidate: nextResult.diagram.layout?.selectedCandidateId,
+        score: nextResult.diagram.layout?.score
+      });
+      setStatus(layoutCompleteStatus(nextResult.diagram.layout?.score, nextResult.diagram.layout?.selectedCandidateId));
+      worker.terminate();
+    };
+    worker.onerror = (event) => {
+      if (cancelled || layoutJobIdRef.current !== jobId) {
+        return;
+      }
 
-        try {
-          const nextResult = runWebPipeline({
-            source: requestSource,
-            engineId: requestEngineId,
-            intent: requestIntent,
-            groupFrames: requestGroupFrames
-          });
-          if (cancelled || layoutJobIdRef.current !== jobId) {
-            return;
-          }
-
-          setGeneratedPipeline({
-            key: mermaidPipelineKey,
-            state: {
-              result: nextResult,
-              parsed: nextResult.parsed,
-              intent: nextResult.intent
-            }
-          });
-          setLayoutJob({
-            id: jobId,
-            key: mermaidPipelineKey,
-            running: false,
-            title: "Layout complete",
-            phase: "Complete",
-            startedAt: Date.now(),
-            candidate: nextResult.diagram.layout?.selectedCandidateId,
-            score: nextResult.diagram.layout?.score
-          });
-          setStatus(layoutCompleteStatus(nextResult.diagram.layout?.score, nextResult.diagram.layout?.selectedCandidateId));
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (cancelled || layoutJobIdRef.current !== jobId) {
-            return;
-          }
-
-          setGeneratedPipeline({
-            key: mermaidPipelineKey,
-            state: { error: message }
-          });
-          setLayoutJob({
-            id: jobId,
-            key: mermaidPipelineKey,
-            running: false,
-            title: "Layout failed",
-            phase: "Error",
-            startedAt: Date.now(),
-            error: message
-          });
-          setStatus("Layout failed");
-        }
-      }, 40);
+      const message = event.message || "Layout worker failed.";
+      setGeneratedPipeline({
+        key: mermaidPipelineKey,
+        state: { error: message }
+      });
+      setLayoutJob({
+        id: jobId,
+        key: mermaidPipelineKey,
+        running: false,
+        title: "Layout failed",
+        phase: "Error",
+        startedAt: Date.now(),
+        error: message
+      });
+      setStatus("Layout failed");
+      worker.terminate();
+    };
+    worker.postMessage({
+      id: jobId,
+      source: requestSource,
+      engineId: requestEngineId,
+      intent: requestIntent,
+      groupFrames: requestGroupFrames
     });
 
     return () => {
       cancelled = true;
-      if (frameId !== undefined) {
-        window.cancelAnimationFrame(frameId);
-      }
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
+      worker.terminate();
     };
-  }, [generatedPipeline, groupFrames, intentOverride, mermaidPipelineKey, mxGraphState, source, sourceMode]);
+  }, [engineId, generatedPipeline, groupFrames, intentOverride, mermaidPipelineKey, mxGraphState, source, sourceMode]);
 
   useEffect(() => {
     if (!layoutJob?.running) {
@@ -461,15 +482,15 @@ export function App(): React.JSX.Element {
     setStatus("Redo");
   };
 
-  const applyIntentOverride = (nextIntent: StereotypeLayoutIntent | undefined, nextStatus: string): void => {
+  const applyIntentOverride = (nextIntent: WebLayoutIntent | undefined, nextStatus: string): void => {
     liveEditSnapshotRef.current = undefined;
     liveEditChangedRef.current = false;
     setMxGraphState(undefined);
-    setIntentOverride(nextIntent ? cloneLayoutIntent(nextIntent) : undefined);
+    setIntentOverride(nextIntent ? cloneLayoutIntent(nextIntent, engineId) : undefined);
     setStatus(nextStatus);
   };
 
-  const commitIntentOverride = (nextIntent: StereotypeLayoutIntent | undefined, nextStatus: string): void => {
+  const commitIntentOverride = (nextIntent: WebLayoutIntent | undefined, nextStatus: string): void => {
     pushUndoSnapshot(captureEditorSnapshot());
     applyIntentOverride(nextIntent, nextStatus);
   };
@@ -551,6 +572,22 @@ export function App(): React.JSX.Element {
         ? "mxGraphXml"
         : "mermaid";
 
+    if (nextMode === "mermaid") {
+      try {
+        const adapter = getLayoutAdapter(engineId);
+        const parsed = readWebPipelineMetadata({ source: text, engineId }).parsed;
+        const initialIntent = adapter.createInitialIntent(parsed);
+
+        if (shouldOpenManualLayoutWizard(engineId)) {
+          setWizardProps({ document: parsed, initialIntent: initialIntent as CoordinateRoutingLayoutV3 });
+        } else {
+          setIntentOverride(initialIntent);
+        }
+      } catch (err) {
+        console.error("Error reading mermaid metadata:", err);
+      }
+    }
+
     setSourceMode(nextMode);
     updateSource(text);
     setStatus(`Imported ${file.name}`);
@@ -571,6 +608,39 @@ export function App(): React.JSX.Element {
     }
 
     downloadText("autodiagram-preview.svg", renderSvgMarkup(layoutView, groupFrames), "image/svg+xml;charset=utf-8");
+  };
+
+  const exportRoutingIntentJson = (): void => {
+    if (!isCoordinateRoutingIntent(activeState.intent)) {
+      return;
+    }
+
+    downloadText(
+      "autodiagram.routing-v3.json",
+      JSON.stringify(activeState.intent, null, 2),
+      "application/json;charset=utf-8"
+    );
+  };
+
+  const handleEngineChange = (newEngineId: LayoutEngineId): void => {
+    setEngineId(newEngineId);
+    if (sourceMode === "mermaid") {
+      try {
+        const adapter = getLayoutAdapter(newEngineId);
+        if (shouldOpenManualLayoutWizard(newEngineId)) {
+          const parsed = readWebPipelineMetadata({ source, engineId: newEngineId }).parsed;
+          let initialIntent: CoordinateRoutingLayoutV3;
+          if (adapter.extractIntent && activeState.result && 'diagram' in activeState.result) {
+            initialIntent = adapter.extractIntent(activeState.result.diagram) as CoordinateRoutingLayoutV3;
+          } else {
+            initialIntent = adapter.createInitialIntent(parsed) as CoordinateRoutingLayoutV3;
+          }
+          setWizardProps({ document: parsed, initialIntent });
+        }
+      } catch (err) {
+        console.error("Error setting up wizard on engine change:", err);
+      }
+    }
   };
 
   return (
@@ -607,7 +677,7 @@ export function App(): React.JSX.Element {
           <select 
             className="toolbar-select"
             value={engineId}
-            onChange={(e) => setEngineId(e.target.value as LayoutEngineId)}
+            onChange={(e) => handleEngineChange(e.target.value as LayoutEngineId)}
             title="Layout Engine"
           >
             <option value="auto-arrange-v2">Auto Arrange V2</option>
@@ -626,7 +696,13 @@ export function App(): React.JSX.Element {
             <AlertTriangle size={14} />
           </button>
           <span className="toolbar-divider" />
-          <ExportMenu xml={activeXml} onExportLayoutJson={exportLayoutJson} onExportSvg={exportSvg} />
+          <ExportMenu
+            xml={activeXml}
+            canExportRoutingIntent={isCoordinateRoutingIntent(activeState.intent)}
+            onExportLayoutJson={exportLayoutJson}
+            onExportRoutingIntent={exportRoutingIntentJson}
+            onExportSvg={exportSvg}
+          />
           <div className="status-indicators">
             {result || isLayoutRunning
               ? <StatusPill kind="ok" text={isLayoutRunning ? layoutJob?.phase ?? status : status} />
@@ -731,7 +807,7 @@ export function App(): React.JSX.Element {
               />
               {engineId === "stereotype-scored" && (
                 <LayoutIntentPanel
-                  intent={activeState.intent}
+                  intent={activeState.intent as StereotypeLayoutIntent | undefined}
                   hasUserPreset={Boolean(intentOverride)}
                   layoutView={layoutView}
                   groupFrames={groupFrames}
@@ -756,6 +832,26 @@ export function App(): React.JSX.Element {
           )}
         </aside>
       )}
+
+      {wizardProps ? (
+        <ImportWizardModal
+          document={wizardProps.document}
+          initialIntent={wizardProps.initialIntent}
+          onConfirm={(modifiedIntent) => {
+            setIntentOverride(modifiedIntent);
+            setWizardProps(undefined);
+            setStatus("Layout configured");
+          }}
+          onAuto={() => {
+            setIntentOverride(undefined);
+            setWizardProps(undefined);
+            runAutoLayout();
+          }}
+          onCancel={() => {
+            setWizardProps(undefined);
+          }}
+        />
+      ) : null}
 
       <footer className="statusbar">
         <div className="status-left">
@@ -793,7 +889,13 @@ export function App(): React.JSX.Element {
   );
 }
 
-function ExportMenu(props: { xml: string; onExportLayoutJson: () => void; onExportSvg: () => void }): React.JSX.Element {
+function ExportMenu(props: {
+  xml: string;
+  canExportRoutingIntent: boolean;
+  onExportLayoutJson: () => void;
+  onExportRoutingIntent: () => void;
+  onExportSvg: () => void;
+}): React.JSX.Element {
   return (
     <div className="toolbar-group">
       <button
@@ -808,6 +910,10 @@ function ExportMenu(props: { xml: string; onExportLayoutJson: () => void; onExpo
       <button type="button" className="secondary-button" onClick={props.onExportLayoutJson} disabled={!props.xml}>
         <FileJson aria-hidden="true" size={16} />
         JSON
+      </button>
+      <button type="button" className="secondary-button" onClick={props.onExportRoutingIntent} disabled={!props.canExportRoutingIntent}>
+        <FileJson aria-hidden="true" size={16} />
+        Intent
       </button>
       <button type="button" className="secondary-button" onClick={props.onExportSvg} disabled={!props.xml}>
         <FileText aria-hidden="true" size={16} />
@@ -2273,7 +2379,7 @@ function ClassInspector(props: {
         <NumberField label="Width" value={props.classCell.width} onChange={(value) => props.onChange(props.classCell.id, { width: value })} />
         <NumberField label="Height" value={props.classCell.height} onChange={(value) => props.onChange(props.classCell.id, { height: value })} />
       </div>
-      <p className="inspector-meta">Group: {props.classCell.stereotype ?? "Ungrouped"} | Rows: {props.classCell.children.length}</p>
+      <p className="inspector-meta">Group: {props.classCell.stereotype ?? props.classCell.label} | Rows: {props.classCell.children.length}</p>
     </div>
   );
 }
@@ -2389,11 +2495,11 @@ function GroupGridPopup(props: {
   onClose: () => void;
   onSave: (nextIntent: StereotypeLayoutIntent) => void;
 }): React.JSX.Element {
-  const [draftIntent, setDraftIntent] = useState(() => cloneLayoutIntent(props.intent));
+  const [draftIntent, setDraftIntent] = useState<StereotypeLayoutIntent>(() => cloneLayoutIntent(props.intent) as StereotypeLayoutIntent);
   const matrixSize = getIntentMatrixSize(draftIntent);
   const updateDraftIntent = (updater: (intent: StereotypeLayoutIntent) => void): void => {
     setDraftIntent((current) => {
-      const next = cloneLayoutIntent(current);
+      const next = cloneLayoutIntent(current) as StereotypeLayoutIntent;
       updater(next);
       return next;
     });
@@ -2661,7 +2767,7 @@ function createMatrixIntentFromCurrentLayout(
   layoutView: MxLayoutViewModel,
   matrixSize: number
 ): StereotypeLayoutIntent {
-  const next = cloneLayoutIntent(baseIntent);
+  const next = cloneLayoutIntent(baseIntent) as StereotypeLayoutIntent;
   applyCurrentLayoutMatrix(next, layoutView, matrixSize);
   return next;
 }
@@ -2670,9 +2776,9 @@ function createMatrixIntentFromPreset(
   baseIntent: StereotypeLayoutIntent,
   matrixSize: number
 ): StereotypeLayoutIntent {
-  const next = cloneLayoutIntent(baseIntent);
+  const next = cloneLayoutIntent(baseIntent) as StereotypeLayoutIntent;
   setIntentMatrixSize(next, matrixSize);
-  next.groups = next.groups.map((group) => normalizeMatrixGroup(group, matrixSize));
+  next.groups = next.groups.map((group: any) => normalizeMatrixGroup(group, matrixSize));
   return next;
 }
 
@@ -3468,6 +3574,16 @@ function readXmlFromLayoutJson(source: string): string {
   return xml;
 }
 
+function isCoordinateRoutingIntent(intent: unknown): intent is CoordinateRoutingLayoutV3 {
+  return typeof intent === "object" &&
+    intent !== null &&
+    "version" in intent &&
+    (intent as { version?: unknown }).version === 3 &&
+    "layoutMode" in intent &&
+    (intent as { layoutMode?: unknown }).layoutMode === "coordinate-routing" &&
+    Array.isArray((intent as { groups?: unknown }).groups);
+}
+
 function downloadText(filename: string, content: string, type: string): void {
   if (!content) {
     return;
@@ -3490,7 +3606,7 @@ function toNumber(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function mermaidLayoutKey(source: string, intent: StereotypeLayoutIntent | undefined, groupFrames: boolean): string {
+function mermaidLayoutKey(source: string, intent: unknown | undefined, groupFrames: boolean): string {
   return JSON.stringify({
     source,
     intent: intent ?? null,
@@ -3530,6 +3646,10 @@ function layoutCompleteStatus(score: DiagramLayoutScore | undefined, candidate: 
   return parts.join(" | ");
 }
 
+function shouldOpenManualLayoutWizard(engineId: LayoutEngineId): boolean {
+  return engineId === "manual-routing-v2";
+}
+
 function shortCandidateLabel(candidate: string): string {
   if (candidate.length <= 42) {
     return candidate;
@@ -3546,7 +3666,8 @@ function appendHistory(history: EditorSnapshot[], snapshot: EditorSnapshot): Edi
 function cloneEditorSnapshot(snapshot: EditorSnapshot): EditorSnapshot {
   return {
     mxGraphState: snapshot.mxGraphState ? cloneMxGraphForHistory(snapshot.mxGraphState) : undefined,
-    intentOverride: snapshot.intentOverride ? cloneLayoutIntent(snapshot.intentOverride) : undefined
+    intentOverride: snapshot.intentOverride ? JSON.parse(JSON.stringify(snapshot.intentOverride)) : undefined,
+    engineId: snapshot.engineId
   };
 }
 

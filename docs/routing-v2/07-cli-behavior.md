@@ -10,6 +10,24 @@ npm run generate -- input.mmd -o output.drawio --engine v2 --layout layout.json
 npm run generate -- input.mmd -o output.drawio --engine v2
 ```
 
+`generate --engine v2 --layout layout.json` accepts `CoordinateRoutingLayoutV3`. If the layout JSON includes root-level `layers`, the CLI uses layer-derived coordinates automatically. Layer rows are horizontal and centered as a whole, while each group keeps its own `packing` value.
+
+Example layer intent:
+
+```json
+{
+  "version": 3,
+  "layoutMode": "coordinate-routing",
+  "layers": [
+    { "id": "entry", "groupIds": ["group_stereotype_Controller"] },
+    { "id": "domain", "groupIds": ["group_stereotype_Manager", "group_stereotype_Model"] }
+  ],
+  "groups": []
+}
+```
+
+The `groups` array still carries real group membership, `nodeOrder`, packing, and fallback coordinates. The shortened example above only shows the layer shape.
+
 Logging flags:
 
 - default prints warnings/errors

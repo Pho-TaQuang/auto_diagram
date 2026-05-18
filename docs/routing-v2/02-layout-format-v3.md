@@ -17,6 +17,11 @@ export type CoordinateRoutingLayoutV3 = {
     packingLocked?: boolean;
     nodeOrderLocked?: boolean;
   }>;
+  layers?: Array<{
+    id: string;
+    label?: string;
+    groupIds: string[];
+  }>;
   routing?: {
     dividerThreshold?: number;
     outerLaneMargin?: number;
@@ -28,3 +33,12 @@ export type CoordinateRoutingLayoutV3 = {
 Public JSON uses a `groups` array for readability. Runtime normalizes it into a group-id map and validates duplicate groups, unknown groups, unknown nodes, duplicate nodes, finite coordinates, and packing values.
 
 `nodeOrder` is intentionally named as an ordered list. It is not just a membership list.
+
+`layers` is optional layout intent for routing-v2. When present, it becomes the source of truth for group placement:
+
+- every group is first measured using its current `packing`, `nodeOrder`, node estimates, padding, and gaps;
+- each layer row is laid out horizontally;
+- rows are centered against the widest row;
+- generated group `x` and `y` values replace stale group coordinates before routing starts.
+
+Layers do not force group packing. A group may stay `vertical` or `horizontal`; changing `packing` changes the measured group size and recomputes layer placement. When `layers` is absent, routing-v2 keeps the legacy coordinate-only behavior and uses group `x` and `y` directly.

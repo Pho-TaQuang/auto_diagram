@@ -75,7 +75,7 @@ A routing divider is a virtual node in the connector graph. The original semanti
 
 Divider-owned semantic edges are not routed directly and do not rely on top-level direct source/target anchors. The trunk owner is a deterministic representative semantic edge; each spoke is owned by its corresponding semantic edge. Physical trunk/spoke paths are accepted as occupancy before ordinary semantic edges are routed, so normal routes avoid divider connector node hits and illegal segment overlaps.
 
-Divider side is a hard constraint. A trunk connects to `divider.side`; spokes connect to `oppositeSide(divider.side)` on the divider and to the class side facing the divider. Spokes are sorted by remote position along the divider axis and are scored to prefer monotonic movement from divider to remote for fan-out, or remote to divider for fan-in.
+Divider side is a hard constraint. A trunk connects to `divider.side`; spokes connect to `oppositeSide(divider.side)` on the divider and to the class side facing the divider. Spokes are sorted by remote position along the divider axis and first try an aligned straight segment from the divider to the remote class. A straight spoke is accepted only when it has no node hit, no illegal segment overlap, and preserves the required monotonic direction; otherwise the existing constrained orthogonal router handles that spoke. Spokes are still scored to prefer monotonic movement from divider to remote for fan-out, or remote to divider for fan-in.
 
 ## Recovery Search
 

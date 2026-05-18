@@ -13,6 +13,7 @@ const dmLoaiLucLuongFixture = readFileSync("docs/dmLoaiLucLuong.md", "utf8");
 
 export function runStereotypeGridLayoutTests(): void {
   groupsNodesByExactStereotypeText();
+  givesEachUnstereotypedClassItsOwnSyntheticGroup();
   createsEditableLayoutIntent();
   createsSuggestedLayoutIntentFromInputGroups();
   placesUnknownGroupsAfterSuggestedGroups();
@@ -55,15 +56,33 @@ function groupsNodesByExactStereotypeText(): void {
 
   const serviceGroup = requireGroup(document.groups, "Service", "stereotype");
   const lowercaseServiceGroup = requireGroup(document.groups, "service", "stereotype");
-  const ungroupedGroup = requireGroup(document.groups, "Ungrouped", "synthetic");
+  const plainClassGroup = requireGroup(document.groups, "PlainClass", "synthetic");
 
   assert.notEqual(serviceGroup.id, lowercaseServiceGroup.id);
   assert.equal(document.nodes.find((node) => node.id === "UpperService")?.groupId, serviceGroup.id);
   assert.equal(document.nodes.find((node) => node.id === "LowerService")?.groupId, lowercaseServiceGroup.id);
-  assert.equal(document.nodes.find((node) => node.id === "PlainClass")?.groupId, ungroupedGroup.id);
+  assert.equal(document.nodes.find((node) => node.id === "PlainClass")?.groupId, plainClassGroup.id);
   assert.deepEqual(serviceGroup.nodeIds, ["UpperService"]);
   assert.deepEqual(lowercaseServiceGroup.nodeIds, ["LowerService"]);
-  assert.deepEqual(ungroupedGroup.nodeIds, ["PlainClass"]);
+  assert.deepEqual(plainClassGroup.nodeIds, ["PlainClass"]);
+}
+
+function givesEachUnstereotypedClassItsOwnSyntheticGroup(): void {
+  const document = applyStereotypeGridLayout(parseMermaidClassDiagram([
+    "classDiagram",
+    "class FirstClass",
+    "class SecondClass",
+    "class ThirdClass",
+    "FirstClass ..> SecondClass : uses",
+    "SecondClass ..> ThirdClass : uses"
+  ].join("\n")));
+  const syntheticGroups = (document.groups ?? []).filter((group) => group.kind === "synthetic");
+
+  assert.equal(syntheticGroups.length, 3);
+  assert.equal(document.groups?.some((group) => group.label === "Ungrouped"), false);
+  assert.deepEqual(syntheticGroups.map((group) => group.label), ["FirstClass", "SecondClass", "ThirdClass"]);
+  assert.ok(syntheticGroups.every((group) => group.nodeIds.length === 1));
+  assert.equal(document.nodes.find((node) => node.id === "FirstClass")?.groupId, requireGroup(document.groups, "FirstClass", "synthetic").id);
 }
 
 function createsEditableLayoutIntent(): void {
@@ -84,7 +103,7 @@ function createsSuggestedLayoutIntentFromInputGroups(): void {
   const intent = createStereotypeLayoutIntent(parsed, { placement: "suggested" });
   const assignedNodeIds = intent.groups.flatMap((group) => group.nodeIds).sort();
   const parsedNodeIds = parsed.nodes.map((node) => node.id).sort();
-  const parsedGroupLabels = [...new Set(parsed.nodes.map((node) => node.stereotype || "Ungrouped"))].sort();
+  const parsedGroupLabels = expectedGroupLabels(parsed.nodes).sort();
   const intentGroupLabels = intent.groups.map((group) => group.label).sort();
 
   assert.equal(intent.grid.columns, 4);
@@ -836,6 +855,24 @@ function setIntentGroupPlacement(
 
 function cloneIntent(intent: StereotypeLayoutIntent): StereotypeLayoutIntent {
   return JSON.parse(JSON.stringify(intent)) as StereotypeLayoutIntent;
+}
+
+function expectedGroupLabels(nodes: DiagramNode[]): string[] {
+  const labels: string[] = [];
+  const seenStereotypes = new Set<string>();
+
+  for (const node of nodes) {
+    if (node.stereotype) {
+      if (!seenStereotypes.has(node.stereotype)) {
+        labels.push(node.stereotype);
+        seenStereotypes.add(node.stereotype);
+      }
+    } else {
+      labels.push(node.label);
+    }
+  }
+
+  return labels;
 }
 
 function requireGroup(

@@ -18,6 +18,10 @@ export {
 } from "./engine/LayoutRunReport.js";
 export {
   createInitialCoordinateRoutingLayoutV3,
+  extractCoordinateRoutingLayoutV3FromDocument,
+  applyCoordinateRoutingLayerLayout,
+  coordinateRoutingLayerLayoutDefaults,
+  measureCoordinateRoutingGroup,
   normalizeCoordinateRoutingIntent,
   normalizeLayoutInput
 } from "./normalizers/coordinateRoutingLayoutV3.js";
@@ -54,7 +58,9 @@ export type {
 } from "./engine/LayoutRunReport.js";
 export type {
   CoordinateRoutingLayoutGroupV3,
+  CoordinateRoutingLayoutLayerV3,
   CoordinateRoutingLayoutV3,
+  CoordinateRoutingLayerLayoutOptions,
   CoordinateRoutingOptions,
   NormalizedCoordinateRoutingIntent,
   NormalizedGroupIntent

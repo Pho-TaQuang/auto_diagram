@@ -35,7 +35,11 @@ import {
   countRouteNodeHits,
   validateRoutedDocument as validateRoutingResult
 } from "../routing/RoutingValidator.js";
-import { templateOnlyRouteStrategy, templateWithOuterLanesRouteStrategy } from "../routing/templateRouter.js";
+import {
+  templateOnlyRouteStrategy,
+  templateWithOuterLanesRouteStrategy,
+  templateWithOuterLanesWithoutDividersRouteStrategy
+} from "../routing/templateRouter.js";
 import type { RouteResult, RouteStrategy, RoutingContext } from "../routing/RouteStrategy.js";
 
 const groupPadding = 32;
@@ -109,8 +113,16 @@ function runRoutingV2(
     ? templateWithOuterLanesRouteStrategy
     : templateOnlyRouteStrategy;
   let normalizedIntent = normalizeCoordinateRoutingIntent(normalizeResult.intent, routingOptions);
+  let selectedCandidateId: string | undefined;
+  let candidatesEvaluated: number | undefined;
   if (engine === "suggest-initial-v2" || engine === "auto-arrange-v2") {
-    normalizedIntent = optimizeGeneratedRoutingIntent(request.document, normalizedIntent, routeStrategy, context);
+    const optimizationRouteStrategy = routeStrategy.id === "template-with-outer-lanes"
+      ? templateWithOuterLanesWithoutDividersRouteStrategy
+      : routeStrategy;
+    const optimized = optimizeGeneratedRoutingIntent(request.document, normalizedIntent, optimizationRouteStrategy, context);
+    normalizedIntent = optimized.intent;
+    selectedCandidateId = optimized.selectedCandidateId;
+    candidatesEvaluated = optimized.candidatesEvaluated;
   }
   const prepared = applyCoordinateRoutingIntent(request.document, normalizedIntent, context);
   const routingContext: RoutingContext = { intent: normalizedIntent, run: context };
@@ -183,6 +195,8 @@ function runRoutingV2(
         outerLaneUsages: routingSummary.outerLaneUsages,
         routingFailures: routingSummary.routingFailures
       },
+      selectedCandidateId,
+      candidatesEvaluated,
       diagnostics: structuredDiagnostics
     }
   };
@@ -205,6 +219,12 @@ type GeneratedIntentCandidate = {
   intent: NormalizedCoordinateRoutingIntent;
 };
 
+type GeneratedIntentOptimizationResult = {
+  intent: NormalizedCoordinateRoutingIntent;
+  selectedCandidateId?: string;
+  candidatesEvaluated: number;
+};
+
 type CandidateScoreVector = [
   hardFailures: number,
   edgeCrossings: number,
@@ -220,46 +240,72 @@ function optimizeGeneratedRoutingIntent(
   intent: NormalizedCoordinateRoutingIntent,
   routeStrategy: RouteStrategy,
   context: LayoutRunContext
-): NormalizedCoordinateRoutingIntent {
+): GeneratedIntentOptimizationResult {
   const candidates = generatedRoutingIntentCandidates(document, intent);
+  const placementOnlyScoring = shouldUsePlacementOnlyGeneratedCandidateScoring(document);
   let best: { candidate: GeneratedIntentCandidate; vector: CandidateScoreVector } | undefined;
+  let candidatesEvaluated = 0;
 
   for (const candidate of candidates) {
+    candidatesEvaluated += 1;
     const attemptLogger = new MemoryLayoutLogger();
     const attemptContext: LayoutRunContext = { logger: attemptLogger, options: context.options };
     const prepared = applyCoordinateRoutingIntent(document, candidate.intent, attemptContext);
-    const routeResult = routeStrategy.route({
-      document: prepared,
-      intent: candidate.intent,
-      context: { intent: candidate.intent, run: attemptContext }
-    });
-    const routed = applyRouteResult(prepared, routeResult);
-    const score = scoreLayout(routed);
-    const validation = validateRoutingResult(prepared, routed, attemptContext, attemptLogger.events);
-    const routingFallbacks = validation.edgeResults.filter((edge) => edge.routingFallbackUsed || edge.routingFailed).length;
-    const hardFailures =
-      score.nodeOverlaps +
-      score.groupOverlaps +
-      validation.edgeNodeHits +
-      validation.illegalSegmentOverlaps +
-      validation.edgeIdentityViolations +
-      validation.invalidDividers +
-      routingFallbacks;
-    const vector: CandidateScoreVector = [
-      hardFailures,
-      validation.edgeCrossings,
-      validation.illegalSegmentOverlaps,
-      routingFallbacks,
-      score.edgeBends,
-      score.totalEdgeLength,
-      score.layoutArea
-    ];
+    let dividerCount = 0;
+    let vector: CandidateScoreVector;
+
+    if (placementOnlyScoring) {
+      const score = scoreLayout(prepared);
+      const hardFailures = score.nodeOverlaps + score.groupOverlaps + score.edgeNodeHits + score.segmentOverlaps;
+      vector = [
+        hardFailures,
+        0,
+        score.segmentOverlaps,
+        0,
+        0,
+        score.totalEdgeLength,
+        score.layoutArea
+      ];
+    } else {
+      const routeResult = routeStrategy.route({
+        document: prepared,
+        intent: candidate.intent,
+        context: { intent: candidate.intent, run: attemptContext }
+      });
+      dividerCount = routeResult.dividers.length;
+      const routed = applyRouteResult(prepared, routeResult);
+      const score = scoreLayout(routed);
+      const validation = validateRoutingResult(prepared, routed, attemptContext, attemptLogger.events);
+      const routingFallbacks = validation.edgeResults.filter((edge) => edge.routingFallbackUsed || edge.routingFailed).length;
+      const hardFailures =
+        score.nodeOverlaps +
+        score.groupOverlaps +
+        validation.edgeNodeHits +
+        validation.illegalSegmentOverlaps +
+        validation.edgeIdentityViolations +
+        validation.invalidDividers +
+        routingFallbacks;
+      vector = [
+        hardFailures,
+        validation.edgeCrossings,
+        validation.illegalSegmentOverlaps,
+        routingFallbacks,
+        score.edgeBends,
+        score.totalEdgeLength,
+        score.layoutArea
+      ];
+    }
 
     context.logger.debug({
       phase: "route",
       type: "generated-layout-candidate-evaluated",
       message: `Generated routing layout candidate ${candidate.name} evaluated.`,
-      data: { candidate: candidate.name, score: vector }
+      data: {
+        candidate: candidate.name,
+        score: vector,
+        dividerCount,
+        scoringMode: placementOnlyScoring ? "placement-only" : "routed"
+      }
     });
 
     if (!best || compareScoreVector(vector, best.vector) < 0) {
@@ -271,7 +317,15 @@ function optimizeGeneratedRoutingIntent(
     }
   }
 
-  return best?.candidate.intent ?? intent;
+  return {
+    intent: best?.candidate.intent ?? intent,
+    selectedCandidateId: best?.candidate.name,
+    candidatesEvaluated
+  };
+}
+
+function shouldUsePlacementOnlyGeneratedCandidateScoring(document: DiagramDocument): boolean {
+  return document.nodes.length > 0;
 }
 
 function generatedRoutingIntentCandidates(document: DiagramDocument, intent: NormalizedCoordinateRoutingIntent): GeneratedIntentCandidate[] {
@@ -279,10 +333,11 @@ function generatedRoutingIntentCandidates(document: DiagramDocument, intent: Nor
     { name: "normalized", intent }
   ];
   const variants: Array<{ padding: number; packing: "original" | "vertical" }> = [
-    { padding: 80, packing: "vertical" },
-    { padding: 120, packing: "vertical" },
-    { padding: 160, packing: "vertical" },
-    { padding: 120, packing: "original" }
+    { padding: 240, packing: "vertical" },
+    { padding: 360, packing: "vertical" },
+    { padding: 480, packing: "vertical" },
+    { padding: 640, packing: "vertical" },
+    { padding: 360, packing: "original" }
   ];
 
   for (const variant of variants) {
@@ -319,7 +374,7 @@ function spiralSearch(
   placedGroups: Rect[],
   padding: number
 ): { x: number; y: number } {
-  const step = 40;
+  const step = 100;
   let angle = 0;
   let radius = 0;
   
@@ -383,11 +438,13 @@ function createGreedyPackedIntent(
     }
   }
 
-  const sortedGroupIds = [...intent.groupOrder].sort((a, b) => {
-    const diff = (degrees.get(b) ?? 0) - (degrees.get(a) ?? 0);
-    if (diff !== 0) return diff;
-    return a.localeCompare(b);
-  });
+  const sortedGroupIds = [...intent.groupOrder]
+    .filter((id) => nextGroups.get(id)?.kind !== "synthetic")
+    .sort((a, b) => {
+      const diff = (degrees.get(b) ?? 0) - (degrees.get(a) ?? 0);
+      if (diff !== 0) return diff;
+      return a.localeCompare(b);
+    });
 
   const placedGroups: Rect[] = [];
   const placedGroupMap = new Map<string, Rect>();
@@ -499,7 +556,19 @@ function applyCoordinateRoutingIntent(
       layout: estimateClassNodeLayout(node)
     } satisfies DiagramNode
   ]));
+  const nodeToGroupId = new Map<string, string>();
+  for (const groupId of intent.groupOrder) {
+    const groupIntent = intent.groups[groupId];
+    if (groupIntent) {
+      for (const nodeId of groupIntent.nodeOrder) {
+        nodeToGroupId.set(nodeId, groupId);
+      }
+    }
+  }
+
   const groups: DiagramGroup[] = [];
+  const groupById = new Map<string, DiagramGroup>();
+  const syntheticGroups: Array<{ group: DiagramGroup; groupNodes: DiagramNode[]; packing: any }> = [];
 
   for (const groupId of intent.groupOrder) {
     const groupIntent = intent.groups[groupId];
@@ -528,21 +597,126 @@ function applyCoordinateRoutingIntent(
       }
     };
 
-    packGroup(group, groupNodes, groupIntent.packing);
+    if (groupIntent.kind === "synthetic") {
+      syntheticGroups.push({ group, groupNodes, packing: groupIntent.packing });
+    } else {
+      packGroup(group, groupNodes, groupIntent.packing);
+      groups.push(group);
+      groupById.set(group.id, group);
+    }
+  }
+
+  const primaryDividerCount = new Map<string, number>();
+
+  for (const { group, groupNodes, packing } of syntheticGroups) {
+    const connectionCounts = new Map<string, number>();
+    for (const edge of document.edges) {
+      const sourceGroup = nodeToGroupId.get(edge.sourceId);
+      const targetGroup = nodeToGroupId.get(edge.targetId);
+      if (sourceGroup === group.id && targetGroup && targetGroup !== group.id) {
+        connectionCounts.set(targetGroup, (connectionCounts.get(targetGroup) ?? 0) + 1);
+      }
+      if (targetGroup === group.id && sourceGroup && sourceGroup !== group.id) {
+        connectionCounts.set(sourceGroup, (connectionCounts.get(sourceGroup) ?? 0) + 1);
+      }
+    }
+
+    let primaryId: string | undefined;
+    let maxConnections = 0;
+    for (const [neighborId, count] of connectionCounts.entries()) {
+      if (count > maxConnections) {
+        maxConnections = count;
+        primaryId = neighborId;
+      }
+    }
+
+    if (primaryId) {
+      const primaryGroup = groupById.get(primaryId);
+      if (primaryGroup?.layout) {
+        let otherX = 0;
+        let otherY = 0;
+        let otherCount = 0;
+
+        for (const [neighborId] of connectionCounts.entries()) {
+          if (neighborId !== primaryId) {
+            const otherGroup = groupById.get(neighborId);
+            if (otherGroup?.layout) {
+              otherX += otherGroup.layout.x + otherGroup.layout.width / 2;
+              otherY += otherGroup.layout.y + otherGroup.layout.height / 2;
+              otherCount++;
+            }
+          }
+        }
+
+        if (otherCount > 0) {
+          otherX /= otherCount;
+          otherY /= otherCount;
+        }
+
+        const count = primaryDividerCount.get(primaryId) ?? 0;
+        primaryDividerCount.set(primaryId, count + 1);
+
+        if (count >= 2) {
+          context.logger.warn({
+            phase: "pack",
+            type: "too-many-dividers",
+            message: `Group ${primaryGroup.label} has more than 2 dividers connected to it.`,
+            groupId: primaryId
+          });
+        }
+
+        packGroup(group, groupNodes, packing);
+        const sw = group.layout?.width ?? 0;
+        const sh = group.layout?.height ?? 0;
+
+        const px = primaryGroup.layout.x + primaryGroup.layout.width / 2;
+        const py = primaryGroup.layout.y + primaryGroup.layout.height / 2;
+
+        if (count === 0) {
+          if (otherCount > 0) {
+            group.layout!.x = (px + otherX) / 2 - sw / 2;
+            group.layout!.y = (py + otherY) / 2 - sh / 2;
+          }
+        } else {
+          let dx = otherCount > 0 ? px - otherX : 0;
+          let dy = otherCount > 0 ? py - otherY : -200;
+          if (dx === 0 && dy === 0) {
+            dx = 0;
+            dy = -200;
+          }
+          // Distance from center of primary group
+          const distance = Math.max(primaryGroup.layout.width, primaryGroup.layout.height) + 100;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          const nx = len > 0 ? dx / len : 0;
+          const ny = len > 0 ? dy / len : -1;
+
+          group.layout!.x = px + nx * distance - sw / 2;
+          group.layout!.y = py + ny * distance - sh / 2;
+        }
+      }
+    }
+
+    packGroup(group, groupNodes, packing);
     groups.push(group);
+    groupById.set(group.id, group);
+
     context.logger.debug({
       phase: "pack",
       type: "group-packed",
-      message: `Group ${group.label} packed ${groupIntent.packing}.`,
+      message: `Group ${group.label} packed ${packing}.`,
       groupId: group.id,
       data: { x: group.layout?.x, y: group.layout?.y, nodeOrder: group.nodeIds }
     });
   }
 
+  const orderedGroups = intent.groupOrder
+    .map(id => groupById.get(id))
+    .filter((g): g is DiagramGroup => Boolean(g));
+
   return {
     ...document,
     nodes: [...nodeById.values()],
-    groups,
+    groups: orderedGroups,
     routingDividers: undefined
   };
 }

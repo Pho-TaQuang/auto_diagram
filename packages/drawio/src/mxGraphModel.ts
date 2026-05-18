@@ -583,13 +583,20 @@ function extractGroups(model: MxGraphModel, classes: MxLayoutClass[]): MxLayoutG
     return frameGroups;
   }
 
-  const byStereotype = new Map<string, MxLayoutClass[]>();
+  const inferredGroups = new Map<string, { label: string; members: MxLayoutClass[] }>();
   for (const classCell of classes) {
-    const key = classCell.stereotype ?? "Ungrouped";
-    byStereotype.set(key, [...(byStereotype.get(key) ?? []), classCell]);
+    const key = classCell.stereotype ? `stereotype:${classCell.stereotype}` : `class:${classCell.id}`;
+    const label = classCell.stereotype ?? classCell.label;
+    const existing = inferredGroups.get(key);
+
+    if (existing) {
+      existing.members.push(classCell);
+    } else {
+      inferredGroups.set(key, { label, members: [classCell] });
+    }
   }
 
-  return [...byStereotype.entries()].map(([label, members], index) => {
+  return [...inferredGroups.values()].map(({ label, members }, index) => {
     const x = Math.min(...members.map((member) => member.x));
     const y = Math.min(...members.map((member) => member.y));
     const right = Math.max(...members.map((member) => member.x + member.width));

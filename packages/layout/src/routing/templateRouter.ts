@@ -16,6 +16,10 @@ import type { RouteRequest, RouteStrategy } from "./RouteStrategy.js";
 const anchorStubDistance = 24;
 const routingDividerThickness = 10;
 const routingDividerMinLength = 48;
+const routingDividerClearance = 12;
+const dividerSpokeLaneStep = 8;
+const straightSpokeMinAnchorRatio = 0.05;
+const straightSpokeMaxAnchorRatio = 0.95;
 const epsilon = 0.001;
 const laneGraphClearance = 36;
 const laneGraphMaxLinesPerAxis = 72;
@@ -32,6 +36,13 @@ type Rectangle = {
   y: number;
   width: number;
   height: number;
+};
+
+type DividerCluster = Rectangle & {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
 };
 
 type RouteCandidate = {
@@ -158,6 +169,8 @@ type RouteSelection = {
 type TemplateRouteOptions = {
   includeOuterLanes: boolean;
   includeDividers: boolean;
+  includeRecovery?: boolean;
+  includeSimplification?: boolean;
 };
 
 type RouteRecoveryOptions = {
@@ -191,7 +204,20 @@ export const templateWithOuterLanesRouteStrategy: RouteStrategy = {
   }
 };
 
+export const templateWithOuterLanesWithoutDividersRouteStrategy: RouteStrategy = {
+  id: "template-with-outer-lanes",
+
+  route(request: RouteRequest) {
+    return routeWithTemplateStrategy(request, {
+      includeOuterLanes: true,
+      includeDividers: false
+    });
+  }
+};
+
 function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRouteOptions) {
+  const includeRecovery = options.includeOuterLanes && options.includeRecovery !== false;
+  const includeSimplification = options.includeSimplification !== false;
   const nodeBounds = request.document.nodes.map((node) => requireNodeRectangle(node));
   const segmentStrategyByEdgeId = new Map<string, DiagramRoutedEdgeSegmentStrategy>();
   const dividerPlan = options.includeDividers
@@ -291,7 +317,7 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
       routeNodes,
       acceptedPaths,
       {
-        includeRecovery: options.includeOuterLanes,
+        includeRecovery,
         source: requireNodeRectangle(requireNode(routeNodeById, connector.sourceId)),
         target: requireNodeRectangle(requireNode(routeNodeById, connector.targetId)),
         bounds: diagramBounds,
@@ -358,18 +384,29 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
     reserveCandidatePorts(reservedPortKeys, selected.candidate);
   }
 
-  const repaired = options.includeOuterLanes && request.intent.routing.maxRepairPasses > 0
+  const repaired = includeRecovery && request.intent.routing.maxRepairPasses > 0
     ? repairRoutedEdges(routedEdges, acceptedPaths, request, routeNodes, diagramBounds, segmentStrategyByEdgeId, portPools, fixedReservedPortKeys)
     : { edges: routedEdges, paths: acceptedPaths, accepted: 0, rejected: 0 };
-  const bendReduced = reduceRouteBends({
-    routedEdges: repaired.edges,
-    routedDividerConnectors,
-    acceptedPaths: repaired.paths,
-    request,
-    routeNodes,
-    routeNodeById,
-    segmentStrategyByEdgeId
-  });
+  const bendReduced = includeSimplification
+    ? reduceRouteBends({
+      routedEdges: repaired.edges,
+      routedDividerConnectors,
+      acceptedPaths: repaired.paths,
+      request,
+      routeNodes,
+      routeNodeById,
+      segmentStrategyByEdgeId
+    })
+    : {
+      edges: repaired.edges,
+      routedDividerConnectors,
+      paths: repaired.paths,
+      accepted: 0,
+      compactAccepted: 0,
+      collapseAccepted: 0,
+      rejected: 0,
+      skipped: repaired.paths.length
+    };
   emitFinalFallbackEvents(bendReduced.edges, bendReduced.paths, request, routeNodes, segmentStrategyByEdgeId);
   request.context.run.logger.debug({
     phase: "repair",
@@ -378,7 +415,7 @@ function routeWithTemplateStrategy(request: RouteRequest, options: TemplateRoute
     data: {
       accepted: repaired.accepted,
       rejected: repaired.rejected,
-      maxRepairPasses: options.includeOuterLanes ? request.intent.routing.maxRepairPasses : 0
+      maxRepairPasses: includeRecovery ? request.intent.routing.maxRepairPasses : 0
     }
   });
   request.context.run.logger.debug({
@@ -618,6 +655,19 @@ function routeDividerConnector(
   const routingEdge = connectorRoutingEdge(connector);
   const source = requireNodeRectangle(requireNode(routeNodeById, connector.sourceId));
   const target = requireNodeRectangle(requireNode(routeNodeById, connector.targetId));
+  const straightSpoke = connector.kind === "divider-spoke"
+    ? tryStraightDividerSpokeRoute(connector, source, target, routingEdge, routeNodes, acceptedPaths)
+    : undefined;
+
+  if (straightSpoke) {
+    return {
+      connector,
+      candidate: straightSpoke,
+      segmentStrategy: "divider",
+      hardFailures: 0
+    };
+  }
+
   const candidates = routeCandidatesForConstrainedConnector(
     connector,
     connectorIndex,
@@ -658,7 +708,7 @@ function routeCandidatesForConstrainedConnector(
   const sourceSlots = constrainedPortSlots(portPools, connector.sourceId, connector.sourceSide, connector.sourceSlotIndex);
   const targetSlots = constrainedPortSlots(portPools, connector.targetId, connector.targetSide, connector.targetSlotIndex);
   const slotPairs = sideConstrainedSlotPairs(sourceSlots, targetSlots, source, target);
-  const budget = connector.kind === "divider-spoke" ? outerStrategyCandidateBudget : corridorStrategyCandidateBudget;
+  const budget = corridorStrategyCandidateBudget;
   const candidates: RouteCandidate[] = [];
 
   for (const [sourceSlot, targetSlot] of slotPairs) {
@@ -673,7 +723,9 @@ function routeCandidatesForConstrainedConnector(
       targetSlot.key,
       bounds,
       outerLaneMargin,
-      includeOuterLanes
+      includeOuterLanes,
+      dividerSpokeStubDistance(connector, "source"),
+      dividerSpokeStubDistance(connector, "target")
     )) {
       candidates.push(candidate);
       if (candidates.length >= budget) {
@@ -696,6 +748,19 @@ function constrainedPortSlots(
     return slots;
   }
   return [slots[Math.min(slotIndex, slots.length - 1)]];
+}
+
+function dividerSpokeStubDistance(connector: PhysicalConnector, endpoint: "source" | "target"): number {
+  if (connector.kind !== "divider-spoke") {
+    return anchorStubDistance;
+  }
+  if (endpoint === "source" && connector.sourceId === connector.dividerId) {
+    return anchorStubDistance + (connector.sourceSlotIndex ?? 0) * dividerSpokeLaneStep;
+  }
+  if (endpoint === "target" && connector.targetId === connector.dividerId) {
+    return anchorStubDistance + (connector.targetSlotIndex ?? 0) * dividerSpokeLaneStep;
+  }
+  return anchorStubDistance;
 }
 
 function selectDividerRouteCandidate(
@@ -1164,6 +1229,9 @@ function selectBendReductionForConnector(
   routeNodes: DiagramNode[],
   routeNodeById: Map<string, DiagramNode>
 ): RouteCandidate | "skipped" | undefined {
+  if (routed.connector.kind === "divider-spoke") {
+    return "skipped";
+  }
   if (countBends(currentPath.points) < 2) {
     return "skipped";
   }
@@ -2280,12 +2348,14 @@ function routeCandidatesForFixedAnchorPair(
   targetPortKey: string | undefined,
   bounds: { left: number; right: number; top: number; bottom: number },
   outerLaneMargin: number,
-  includeOuterLanes: boolean
+  includeOuterLanes: boolean,
+  sourceStubDistance = anchorStubDistance,
+  targetStubDistance = anchorStubDistance
 ): RouteCandidate[] {
   const sourcePoint = anchorPoint(source, sourceAnchor);
   const targetPoint = anchorPoint(target, targetAnchor);
-  const sourcePort = outsidePort(sourcePoint, sourceAnchor, 0);
-  const targetPort = outsidePort(targetPoint, targetAnchor, 0);
+  const sourcePort = outsidePortAtDistance(sourcePoint, sourceAnchor, sourceStubDistance);
+  const targetPort = outsidePortAtDistance(targetPoint, targetAnchor, targetStubDistance);
   const midX = (sourcePort.x + targetPort.x) / 2;
   const midY = (sourcePort.y + targetPort.y) / 2;
   const offsets = deterministicPrivateOffsets(edgeId, edgeIndex);
@@ -2696,6 +2766,7 @@ function planRoutingDividers(
   const dividers: DiagramRoutingDivider[] = [];
   const diagnostics: DiagramDiagnostic[] = [];
   const sideSlotsByRemoteGroupId = new Map<string, number>();
+  const firstSideByRemoteGroupId = new Map<string, DiagramEdgeAnchorSide>();
   const groups = [
     ...groupEdgesByCommonAndRemoteGroup(edges, "sourceId", nodeById).map((group) => ({ ...group, mode: "fanOut" as const })),
     ...groupEdgesByCommonAndRemoteGroup(edges, "targetId", nodeById).map((group) => ({ ...group, mode: "fanIn" as const }))
@@ -2752,12 +2823,24 @@ function planRoutingDividers(
       });
     }
 
-    const divider = materializeDivider(group, nodeById, groupById, request, dividers.length, sideSlot);
+    const divider = materializeDivider(
+      group,
+      nodeById,
+      groupById,
+      request,
+      dividers.length,
+      sideSlot,
+      dividers,
+      firstSideByRemoteGroupId.get(slotKey)
+    );
     if (!divider) {
       continue;
     }
 
     dividers.push(divider);
+    if (sideSlot === 0) {
+      firstSideByRemoteGroupId.set(slotKey, divider.side);
+    }
     sideSlotsByRemoteGroupId.set(slotKey, sideSlot + 1);
     group.edges.forEach((edge) => usedEdgeIds.add(edge.id));
     request.context.run.logger.info({
@@ -2805,7 +2888,9 @@ function materializeDivider(
   groupById: Map<string, DiagramGroup>,
   request: RouteRequest,
   index: number,
-  sideSlot: number
+  sideSlot: number,
+  existingDividers: DiagramRoutingDivider[],
+  firstSideForRemoteGroup?: DiagramEdgeAnchorSide
 ): DiagramRoutingDivider | undefined {
   const commonNode = nodeById.get(group.commonNodeId);
   if (!commonNode?.layout) {
@@ -2822,33 +2907,34 @@ function materializeDivider(
 
   const common = requireNodeRectangle(commonNode);
   const remoteGroup = groupById.get(group.remoteGroupId);
-  const cluster = remoteGroup?.layout
-    ? { ...requireLayoutLikeRectangle(remoteGroup.id, remoteGroup.layout), left: remoteGroup.layout.x, right: remoteGroup.layout.x + remoteGroup.layout.width, top: remoteGroup.layout.y, bottom: remoteGroup.layout.y + remoteGroup.layout.height }
-    : rectangleBounds(otherNodes.map((node) => requireNodeRectangle(node)));
-  const allowedSides = dividerSidesForRemoteGroup(group.remoteGroupId, cluster, request);
-  const dx = centerX(cluster) - centerX(common);
-  const dy = centerY(cluster) - centerY(common);
-  const preferredSide: DiagramEdgeAnchorSide = Math.abs(dx) >= Math.abs(dy)
-    ? (dx > 0 ? "west" : "east")
-    : (dy > 0 ? "north" : "south");
-  const side = dividerSideForSlot(allowedSides, preferredSide, sideSlot);
+  const remoteNodeRectangles = otherNodes.map((node) => requireNodeRectangle(node));
+  // Side choice follows the placed remote nodes; generated group frames can include
+  // rank whitespace and should not flip dividers onto an unrelated side.
+  const cluster: DividerCluster = rectangleBounds(remoteNodeRectangles);
+  const remoteBoundary: Rectangle = remoteGroup?.layout
+    ? requireLayoutLikeRectangle(remoteGroup.id, remoteGroup.layout)
+    : cluster;
+  const preferredSide = remoteSideFacingCommon(common, cluster);
+  const blockers = [
+    ...nodesToRectangles(nodeById),
+    remoteBoundary,
+    ...existingDividers.map((divider) => dividerRectangle(divider))
+  ];
+  const minimumSideOffset = Math.max(0, group.edges.length - 1) * dividerSpokeLaneStep;
+  const placement = selectDividerPlacement(
+    preferredSide,
+    sideSlot,
+    cluster,
+    blockers,
+    existingDividers,
+    group.remoteGroupId,
+    minimumSideOffset,
+    firstSideForRemoteGroup
+  );
+  const side = placement.side;
   const orientation = side === "west" || side === "east" ? "vertical" : "horizontal";
-  const offset = anchorStubDistance + routingDividerThickness;
-  const sideOffset = Math.floor(sideSlot / 2) * (anchorStubDistance + routingDividerThickness);
-
-  const layout = orientation === "vertical"
-    ? {
-      x: side === "west" ? cluster.left - offset - sideOffset : cluster.right + anchorStubDistance + sideOffset,
-      y: cluster.top,
-      width: routingDividerThickness,
-      height: Math.max(routingDividerMinLength, cluster.bottom - cluster.top)
-    }
-    : {
-      x: cluster.left,
-      y: side === "north" ? cluster.top - offset - sideOffset : cluster.bottom + anchorStubDistance + sideOffset,
-      width: Math.max(routingDividerMinLength, cluster.right - cluster.left),
-      height: routingDividerThickness
-    };
+  const layout = placement.layout;
+  const sideOffset = placement.sideOffset;
 
   return {
     id: `routing_divider_${index + 1}_${group.mode}_${group.commonNodeId}_${safeIdPart(group.remoteGroupId)}_${side}`,
@@ -2865,34 +2951,209 @@ function materializeDivider(
   };
 }
 
-function dividerSidesForRemoteGroup(
-  remoteGroupId: string,
-  cluster: Rectangle,
-  request: RouteRequest
-): [DiagramEdgeAnchorSide, DiagramEdgeAnchorSide] {
-  const packing = request.intent.groups[remoteGroupId]?.packing;
-  if (packing === "horizontal") {
-    return ["north", "south"];
+function tryStraightDividerSpokeRoute(
+  connector: PhysicalConnector,
+  source: Rectangle,
+  target: Rectangle,
+  edge: DiagramEdge,
+  routeNodes: DiagramNode[],
+  acceptedPaths: AcceptedPath[]
+): RouteCandidate | undefined {
+  if (!connector.sourceSide || !connector.targetSide || !connector.dividerId || !connector.monotonic) {
+    return undefined;
   }
-  if (packing === "vertical") {
-    return ["west", "east"];
+  if (sideAxis(connector.sourceSide) !== sideAxis(connector.targetSide)) {
+    return undefined;
+  }
+  if (connector.sourceId !== connector.dividerId && connector.targetId !== connector.dividerId) {
+    return undefined;
   }
 
-  return cluster.width >= cluster.height
-    ? ["north", "south"]
-    : ["west", "east"];
+  const dividerIsSource = connector.sourceId === connector.dividerId;
+  const remote = dividerIsSource ? target : source;
+  const alignCoordinate = sideAxis(connector.sourceSide) === "x"
+    ? centerY(remote)
+    : centerX(remote);
+  const sourceAnchor = straightSpokeAnchor(source, connector.sourceSide, alignCoordinate);
+  const targetAnchor = straightSpokeAnchor(target, connector.targetSide, alignCoordinate);
+  const sourcePoint = anchorPoint(source, sourceAnchor);
+  const targetPoint = anchorPoint(target, targetAnchor);
+
+  if (Math.abs(sourcePoint.x - targetPoint.x) >= epsilon && Math.abs(sourcePoint.y - targetPoint.y) >= epsilon) {
+    return undefined;
+  }
+
+  const candidate: RouteCandidate = {
+    sourceAnchor,
+    targetAnchor,
+    points: [sourcePoint, targetPoint],
+    waypoints: []
+  };
+  const hardFailureBreakdown = routeHardFailureBreakdown(edge, candidate.points, routeNodes, acceptedPaths);
+  if (hardFailureBreakdown.nodeHits > 0 || hardFailureBreakdown.segmentOverlaps > 0) {
+    return undefined;
+  }
+  if (countNonMonotonicSteps(candidate.points, connector.monotonic) > 0) {
+    return undefined;
+  }
+
+  return candidate;
 }
 
-function dividerSideForSlot(
-  allowedSides: [DiagramEdgeAnchorSide, DiagramEdgeAnchorSide],
+function straightSpokeAnchor(rectangle: Rectangle, side: DiagramEdgeAnchorSide, alignCoordinate: number): DiagramEdgeAnchor {
+  const ratio = sideAxis(side) === "x"
+    ? (alignCoordinate - rectangle.y) / rectangle.height
+    : (alignCoordinate - rectangle.x) / rectangle.width;
+
+  return {
+    side,
+    ratio: clampStraightSpokeRatio(ratio)
+  };
+}
+
+function clampStraightSpokeRatio(value: number): number {
+  return Math.max(straightSpokeMinAnchorRatio, Math.min(straightSpokeMaxAnchorRatio, value));
+}
+
+type DividerPlacement = {
+  side: DiagramEdgeAnchorSide;
+  layout: DiagramRoutingDivider["layout"];
+  sideOffset: number;
+};
+
+function remoteSideFacingCommon(common: Rectangle, cluster: DividerCluster): DiagramEdgeAnchorSide {
+  const commonX = centerX(common);
+  const commonY = centerY(common);
+  if (commonX >= cluster.left - epsilon &&
+    commonX <= cluster.right + epsilon &&
+    commonY >= cluster.top - epsilon &&
+    commonY <= cluster.bottom + epsilon) {
+    const distances: Array<{ side: DiagramEdgeAnchorSide; distance: number }> = [
+      { side: "west", distance: Math.abs(commonX - cluster.left) },
+      { side: "east", distance: Math.abs(cluster.right - commonX) },
+      { side: "north", distance: Math.abs(commonY - cluster.top) },
+      { side: "south", distance: Math.abs(cluster.bottom - commonY) }
+    ];
+    return distances.sort((left, right) => left.distance - right.distance)[0].side;
+  }
+
+  const dx = centerX(cluster) - centerX(common);
+  const dy = centerY(cluster) - centerY(common);
+  return Math.abs(dx) >= Math.abs(dy)
+    ? (dx > 0 ? "west" : "east")
+    : (dy > 0 ? "north" : "south");
+}
+
+function selectDividerPlacement(
   preferredSide: DiagramEdgeAnchorSide,
-  sideSlot: number
-): DiagramEdgeAnchorSide {
-  const firstSide = allowedSides.includes(preferredSide)
-    ? preferredSide
-    : allowedSides[0];
-  const secondSide = allowedSides.find((side) => side !== firstSide) ?? allowedSides[1];
-  return sideSlot % 2 === 0 ? firstSide : secondSide;
+  sideSlot: number,
+  cluster: DividerCluster,
+  blockers: Rectangle[],
+  existingDividers: DiagramRoutingDivider[],
+  remoteGroupId: string,
+  minimumSideOffset = 0,
+  firstSideForRemoteGroup?: DiagramEdgeAnchorSide
+): DividerPlacement {
+  const sideCandidates = dividerSideCandidates(preferredSide, sideSlot, firstSideForRemoteGroup);
+  const baseOffset = Math.max(dividerBaseSideOffset(sideSlot), minimumSideOffset);
+  let best: { placement: DividerPlacement; score: number } | undefined;
+
+  for (const [sideRank, side] of sideCandidates.entries()) {
+    for (let attempt = 0; attempt <= 8; attempt += 1) {
+      const sideOffset = baseOffset + attempt * dividerOffsetStep();
+      const layout = dividerLayoutForSide(side, cluster, sideOffset);
+      const overlapCount = blockers.reduce((count, blocker) =>
+        count + (rectanglesOverlap(expandRectangle(layout, routingDividerClearance), blocker) ? 1 : 0), 0);
+      const sameSideCount = existingDividers.filter((divider) =>
+        divider.remoteGroupId === remoteGroupId && divider.side === side
+      ).length;
+      const score = overlapCount * 1_000_000_000_000 +
+        sideRank * 1_000_000_000 +
+        sameSideCount * 1_000_000 +
+        sideOffset;
+
+      if (!best || score < best.score) {
+        best = { placement: { side, layout, sideOffset }, score };
+      }
+
+      if (overlapCount === 0) {
+        break;
+      }
+    }
+  }
+
+  if (!best) {
+    const side = sideCandidates[0] ?? preferredSide;
+    const sideOffset = baseOffset;
+    return { side, layout: dividerLayoutForSide(side, cluster, sideOffset), sideOffset };
+  }
+
+  return best.placement;
+}
+
+function dividerSideCandidates(
+  preferredSide: DiagramEdgeAnchorSide,
+  sideSlot: number,
+  firstSideForRemoteGroup?: DiagramEdgeAnchorSide
+): DiagramEdgeAnchorSide[] {
+  if (sideSlot === 0) {
+    return [preferredSide];
+  }
+  const firstSide = firstSideForRemoteGroup ?? preferredSide;
+  const opposite = oppositeSide(firstSide);
+  if (sideSlot === 1) {
+    return [opposite];
+  }
+  return [
+    preferredSide,
+    opposite,
+    firstSide,
+    ...allAnchorSides().filter((side) => side !== preferredSide && side !== opposite && side !== firstSide)
+  ];
+}
+
+function dividerBaseSideOffset(sideSlot: number): number {
+  return sideSlot < 2 ? 0 : Math.floor(sideSlot / 2) * dividerOffsetStep();
+}
+
+function dividerOffsetStep(): number {
+  return anchorStubDistance + routingDividerThickness;
+}
+
+function dividerLayoutForSide(
+  side: DiagramEdgeAnchorSide,
+  cluster: DividerCluster,
+  sideOffset: number
+): DiagramRoutingDivider["layout"] {
+  const offset = dividerOffsetStep();
+  if (side === "west" || side === "east") {
+    return {
+      x: side === "west" ? cluster.left - offset - sideOffset : cluster.right + anchorStubDistance + sideOffset,
+      y: cluster.top,
+      width: routingDividerThickness,
+      height: Math.max(routingDividerMinLength, cluster.bottom - cluster.top)
+    };
+  }
+
+  return {
+    x: cluster.left,
+    y: side === "north" ? cluster.top - offset - sideOffset : cluster.bottom + anchorStubDistance + sideOffset,
+    width: Math.max(routingDividerMinLength, cluster.right - cluster.left),
+    height: routingDividerThickness
+  };
+}
+
+function nodesToRectangles(nodeById: Map<string, DiagramNode>): Rectangle[] {
+  return [...nodeById.values()]
+    .filter((node) => Boolean(node.layout))
+    .map((node) => requireNodeRectangle(node));
+}
+
+function rectanglesOverlap(left: { x: number; y: number; width: number; height: number }, right: { x: number; y: number; width: number; height: number }): boolean {
+  return left.x < right.x + right.width - epsilon &&
+    left.x + left.width > right.x + epsilon &&
+    left.y < right.y + right.height - epsilon &&
+    left.y + left.height > right.y + epsilon;
 }
 
 function requireLayoutLikeRectangle(id: string, layout: { x: number; y: number; width: number; height: number }): Rectangle {
@@ -3134,6 +3395,10 @@ function anchorPoint(rectangle: Rectangle, anchor: DiagramEdgeAnchor): DiagramPo
 
 function outsidePort(point: DiagramPoint, anchor: DiagramEdgeAnchor, laneIndex: number): DiagramPoint {
   const distance = anchorStubDistance * (laneIndex + 1);
+  return outsidePortAtDistance(point, anchor, distance);
+}
+
+function outsidePortAtDistance(point: DiagramPoint, anchor: DiagramEdgeAnchor, distance: number): DiagramPoint {
   if (anchor.side === "north") {
     return { x: point.x, y: point.y - distance };
   }
